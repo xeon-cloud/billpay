@@ -22,6 +22,7 @@
 <link rel="stylesheet" href="/assets/fonts/fonts.css">
 <link rel="stylesheet" href="/assets/css/tokens.css">
 <link rel="stylesheet" href="/assets/css/app.css">
+<link rel="stylesheet" href="/assets/css/periods.css">
 <!-- Тема до первой отрисовки — без мигания -->
 <script>try{var t=localStorage.getItem('billpay-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=t;document.querySelector('meta[name=theme-color]').content=t==='light'?'#F4F3EF':'#0A0A0A'}catch(e){}</script>
 </head>
@@ -47,18 +48,47 @@
         <div class="days" id="days"></div>
       </section>
 
-      <section class="card" id="history">
-        <div class="th"><span class="h3">Периоды</span>
+      <section class="card pt" id="history">
+        <div class="pt-h"><span class="h3">Периоды</span>
+          <div class="mswitch" id="mnav" role="group" aria-label="Месяц"></div>
+        </div>
+
+        <!-- поиск по названию + валюта; на мобиле — липкая панель и кнопка фильтров -->
+        <div class="pt-bar" id="bar">
+          <label class="psearch" id="psearch">
+            <span data-ic="search"></span>
+            <input id="pq" type="search" placeholder="Поиск по названию" autocomplete="off" spellcheck="false" maxlength="100" aria-label="Поиск по названию платежа">
+            <button type="button" class="pclear" id="pqclear" aria-label="Очистить поиск" hidden><span data-ic="x"></span></button>
+          </label>
+          <div class="fgroup">
+            <div class="dd" id="ddCur">
+              <button class="fbtn" type="button" data-dd="cur" aria-haspopup="true" aria-expanded="false"><span class="fl">Валюта</span><span class="fv" id="curVal">все</span><span data-ic="down"></span></button>
+              <div class="pop" role="menu">
+                <div class="lbl pop-h">Валюта</div>
+                <div id="curOpts"></div>
+              </div>
+            </div>
+          </div>
+          <div class="mbtns">
+            <button class="fbtn ic" type="button" data-sheet aria-label="Фильтры и сортировка"><span data-ic="filter"></span><span class="badge" id="fcount" hidden>0</span></button>
+          </div>
+        </div>
+
+        <div class="pt-tabs">
           <div class="chips" id="tabs" role="group" aria-label="Фильтр по статусу">
             <button class="chip on" data-f="all" aria-pressed="true">Все<em></em></button>
             <button class="chip" data-f="unpaid" aria-pressed="false">Не оплачено<em></em></button>
             <button class="chip" data-f="overdue" aria-pressed="false">Просрочено<em></em></button>
             <button class="chip" data-f="paid" aria-pressed="false">Оплачено<em></em></button>
           </div>
-          <div class="mnav" id="mnav"></div>
+          <button class="more reset-l" type="button" data-reset id="resetL" hidden>Сбросить</button>
         </div>
-        <div class="grid gh"><span>Название</span><span class="r">Сумма</span><span>Срок</span><span>Статус</span><span>Факт. дата</span><span class="r">Просрочка</span><span></span></div>
-        <div id="rows"></div>
+
+        <!-- итоги по найденным периодам, отдельно по каждой валюте -->
+        <div class="pt-sum" id="psum"></div>
+
+        <div class="grid gh" id="ghead" role="row"></div>
+        <div id="rows" role="rowgroup" aria-live="polite"></div>
       </section>
     </div>
   </main>
@@ -67,5 +97,19 @@
 <!--BILLPAY_BOOT-->
 <script src="/assets/js/api.js"></script>
 <script src="/assets/js/app.js"></script>
+
+<!-- мобильный bottom sheet: статус, валюта, сортировка -->
+<div class="sheet-ov" id="sheet" aria-hidden="true">
+  <div class="sheet" role="dialog" aria-label="Фильтры и сортировка">
+    <div class="grab"></div>
+    <div class="sh-h"><b>Фильтры</b><button class="more" type="button" data-reset>Сбросить</button></div>
+    <div class="sh-b">
+      <div class="sh-s"><div class="lbl">Статус</div><div class="sh-chips" id="shStatus"></div></div>
+      <div class="sh-s"><div class="lbl">Валюта</div><div class="sh-chips" id="shCur"></div></div>
+      <div class="sh-s"><div class="lbl">Сортировка</div><div class="sh-sort" id="shSort"></div><p class="pop-n">Сумма сортируется внутри каждой валюты — без конвертации</p></div>
+    </div>
+    <div class="sh-f"><button class="btn full lg" type="button" data-close-sheet id="shApply">Показать</button></div>
+  </div>
+</div>
 </body>
 </html>

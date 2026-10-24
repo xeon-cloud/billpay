@@ -66,12 +66,44 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
     res.status(204).end();
   });
 
+  // общие фильтры списка периодов и итогов
+  function listFilter(req, res) {
+    const { q, status, currency, sort, order } = req.query;
+    const one = (v) => (Array.isArray(v) ? NaN : v);
+    if ([q, status, currency, sort, order].some((v) => Number.isNaN(one(v)))) { bad(res, 'Каждый параметр передаётся один раз; несколько валют — через запятую'); return null; }
+    const f = {};
+    if (q !== undefined) {
+      if (q.trim().length > 100) { bad(res, 'q: не длиннее 100 символов'); return null; }
+      if (q.trim()) f.q = q.trim();
+    }
+    if (status !== undefined && status !== '' && status !== 'all') {
+      if (!['paid', 'unpaid', 'overdue'].includes(status)) { bad(res, 'status: paid, unpaid или overdue'); return null; }
+      f.status = status;
+    }
+    if (currency !== undefined && currency !== '') {
+      const list = [...new Set(currency.split(',').map((c) => c.trim().toUpperCase()).filter(Boolean))];
+      if (!list.length || list.some((c) => !payments.CURRENCIES.includes(c))) { bad(res, 'currency: RUB, USD, EUR или их список через запятую'); return null; }
+      f.currency = list;
+    }
+    if (sort !== undefined && sort !== '') {
+      if (!payments.SORT_KEYS.includes(sort)) { bad(res, `sort: ${payments.SORT_KEYS.join(', ')}`); return null; }
+      f.sort = sort;
+    }
+    if (order !== undefined && order !== '') {
+      if (!['asc', 'desc'].includes(order)) { bad(res, 'order: asc или desc'); return null; }
+      f.order = order;
+    }
+    return f;
+  }
+
   r.get('/payment-occurrences', requireAuth, async (req, res) => {
-    const month = monthParam(req), { status, currency } = req.query;
+    const month = monthParam(req);
     if (!D.isMonth(month)) return bad(res, 'month: формат YYYY-MM');
-    if (status && !['paid', 'unpaid', 'overdue'].includes(status)) return bad(res, 'status: paid, unpaid или overdue');
-    if (currency && !payments.CURRENCIES.includes(currency)) return bad(res, 'currency: RUB, USD или EUR');
-    res.json(await payments.occurrences(month, { status, currency }));
+    const f = listFilter(req, res); if (!f) return;
+    const { include } = req.query;
+    if (include !== undefined && include !== 'meta') return bad(res, 'include: meta');
+    // include=meta — объект со счётчиками и итогами; без него — массив, как раньше
+    res.json(include === 'meta' ? await payments.occurrencePage(month, f) : await payments.occurrences(month, f));
   });
 
   r.get('/payment-occurrences/:id', requireAuth, async (req, res) => {
@@ -98,7 +130,8 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
   r.get('/payments/summary', requireAuth, async (req, res) => {
     const month = monthParam(req);
     if (!D.isMonth(month)) return bad(res, 'month: формат YYYY-MM');
-    res.json(await payments.summary(month));
+    const f = listFilter(req, res); if (!f) return;
+    res.json(await payments.summary(month, f));
   });
 
   const LOGIN = /^[a-z0-9._-]{3,32}$/i;

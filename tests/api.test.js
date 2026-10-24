@@ -125,6 +125,71 @@ test('админ создаёт пользователя; итоги по вал
   assert.equal((await call('GET', `/api/v1/payment-occurrences?month=${mon(D18)}&currency=USD`, { cookie: c })).json.length, 1);
 });
 
+test('список периодов: поиск, фильтры, сортировка, счётчики и итоги по валютам', async () => {
+  const M = mon(D18), c = await login('anna', 'secret1');
+  const made = {};
+  for (const [k, name, amount, currency] of [['a', 'ФТ Аренда офиса', 85000, 'RUB'], ['b', 'ФТ Сервер', 48, 'USD'], ['c', 'ФТ Подписка', 10, 'EUR'], ['d', 'ФТ Аренда склада', 45000, 'RUB']]) {
+    made[k] = await createPayment({ name, amount, currency, next_date: D18 });
+  }
+  const d = await occOf(made.d.id, M);
+  await call('PATCH', `/api/v1/payment-occurrences/${d.id}`, { cookie: c, body: { is_paid: true, paid_at: D.addDays(D18, 2) } });
+  const page = async (qs, cookie = c) => { const r = await call('GET', `/api/v1/payment-occurrences?month=${M}&include=meta&${qs}`, { cookie }); assert.equal(r.status, 200, r.text); return r.json; };
+
+  // поиск без учёта регистра + итоги отдельно по валютам, без конвертации
+  let p = await page('q=фт');
+  assert.equal(p.month, M);
+  assert.ok(p.total >= 4);
+  assert.equal(p.count, 4);
+  assert.deepEqual(p.counts, { all: 4, unpaid: 0, overdue: 3, paid: 1 });
+  assert.deepEqual(p.totals.map((t) => [t.currency, t.count, t.total, t.paid, t.overdue, t.to_pay]), [['RUB', 2, 130000, 45000, 85000, 0], ['USD', 1, 48, 0, 48, 0], ['EUR', 1, 10, 0, 10, 0]]);
+  assert.deepEqual((await page('q=%D0%B0%D1%80%D0%B5%D0%BD%D0%B4%D0%B0')).items.filter((o) => o.name.startsWith('ФТ')).map((o) => o.name).sort(), ['ФТ Аренда офиса', 'ФТ Аренда склада']);
+
+  // валюты списком через запятую (регистр не важен); статус не меняет счётчики вкладок
+  p = await page('q=фт&currency=rub,EUR');
+  assert.deepEqual(p.items.map((o) => o.currency).sort(), ['EUR', 'RUB', 'RUB']);
+  assert.equal(p.totals.find((t) => t.currency === 'USD').count, 0);
+  p = await page('q=фт&status=paid');
+  assert.deepEqual([p.count, p.counts.all, p.items[0].name], [1, 4, 'ФТ Аренда склада']);
+  assert.deepEqual(p.totals.find((t) => t.currency === 'RUB').total, 45000);
+
+  // сортировка: сумма — внутри групп валют RUB → USD → EUR
+  p = await page('q=фт&sort=amount&order=desc');
+  assert.deepEqual(p.items.map((o) => [o.currency, o.amount]), [['RUB', 85000], ['RUB', 45000], ['USD', 48], ['EUR', 10]]);
+  p = await page('q=фт&sort=amount&order=asc');
+  assert.deepEqual(p.items.map((o) => [o.currency, o.amount]), [['RUB', 45000], ['RUB', 85000], ['USD', 48], ['EUR', 10]]);
+  p = await page('q=фт&sort=name&order=asc');
+  assert.deepEqual(p.items.map((o) => o.name), ['ФТ Аренда офиса', 'ФТ Аренда склада', 'ФТ Подписка', 'ФТ Сервер']);
+  p = await page('q=фт&sort=name&order=desc');
+  assert.equal(p.items[0].name, 'ФТ Сервер');
+  for (const order of ['asc', 'desc']) assert.equal((await page(`q=фт&sort=paid_at&order=${order}`)).items[0].name, 'ФТ Аренда склада', 'без даты оплаты — в конце');
+  p = await page('q=фт&sort=status&order=asc');
+  assert.equal(p.items[p.items.length - 1].status, 'paid');
+  p = await page('q=фт&sort=overdue_days&order=desc');
+  assert.ok(p.items[0].overdue_days >= p.items[p.items.length - 1].overdue_days);
+  assert.equal(p.items[p.items.length - 1].name, 'ФТ Аренда склада');
+  assert.deepEqual((await page('q=фт&sort=due_date&order=asc')).items.map((o) => o.id), [...p.items].sort((x, y) => x.id - y.id).map((o) => o.id));
+
+  // пустой результат
+  p = await page('q=zzz-нет-такого');
+  assert.deepEqual([p.count, p.items, p.counts.all], [0, [], 0]);
+  assert.ok(p.totals.every((t) => t.count === 0 && t.total === 0));
+
+  // без include=meta — по-прежнему массив, фильтры тоже работают; итоги принимают те же фильтры
+  const arr = (await call('GET', `/api/v1/payment-occurrences?month=${M}&q=фт&currency=USD,EUR&sort=amount&order=desc`, { cookie: c })).json;
+  assert.ok(Array.isArray(arr));
+  assert.deepEqual(arr.map((o) => o.currency), ['USD', 'EUR']);
+  const sum = (await call('GET', `/api/v1/payments/summary?month=${M}&q=фт&status=overdue`, { cookie: c })).json;
+  assert.deepEqual(sum.map((t) => [t.currency, t.overdue, t.count]), [['RUB', 85000, 1], ['USD', 48, 1], ['EUR', 10, 1]]);
+
+  // валидация
+  for (const qs of ['sort=foo', 'order=up', 'currency=GBP', 'currency=RUB,XXX', 'status=late', 'include=all', `q=${'я'.repeat(101)}`, 'currency=RUB&currency=USD', 'sort=amount&sort=name']) {
+    assert.equal((await call('GET', `/api/v1/payment-occurrences?month=${M}&${qs}`, { cookie: c })).status, 400, qs);
+  }
+  assert.equal((await call('GET', `/api/v1/payments/summary?month=${M}&currency=GBP`, { cookie: c })).status, 400);
+  assert.equal((await call('GET', `/api/v1/payment-occurrences?month=${M}&include=meta&q=фт`)).status, 401);
+  for (const k of Object.keys(made)) assert.equal((await call('DELETE', `/api/v1/recurring-payments/${made[k].id}`, { cookie: A })).status, 204);
+});
+
 test('напоминания: за 3 дня до срока, только по актуальным периодам', async () => {
   const meta = (await call('GET', `/api/v1/meta?month=${mon(FUT)}`, { cookie: A })).json;
   const o = await occOf(F.notion.id, mon(FUT));

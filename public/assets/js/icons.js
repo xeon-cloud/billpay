@@ -30,6 +30,10 @@ window.BillPayIcons = {
   home:'<path d="M4 10.2 12 4l8 6.2V20h-5.5v-5.5h-5V20H4Z"/>',
   sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/>',
   moon:'<path d="M19.5 14.5A7.5 7.5 0 0 1 9.5 4.5a7.5 7.5 0 1 0 10 10Z"/>',
-  help:'<circle cx="12" cy="12" r="8.5"/><path d="M9.8 9.5a2.3 2.3 0 0 1 4.4.8c0 1.7-2.2 2-2.2 3.4M12 16.6v.2"/>'
+  help:'<circle cx="12" cy="12" r="8.5"/><path d="M9.8 9.5a2.3 2.3 0 0 1 4.4.8c0 1.7-2.2 2-2.2 3.4M12 16.6v.2"/>',
+  filter:'<path d="M4 6.5h16M7 12h10M10 17.5h4"/>',
+  sort:'<path d="M7 4.5v15M4 16.5l3 3 3-3M17 19.5v-15M14 7.5l3-3 3 3"/>',
+  up:'<path d="M12 18.5v-13M7 10.5l5-5 5 5"/>',
+  dn:'<path d="M12 5.5v13M7 13.5l5 5 5-5"/>'
 };
 window.ic = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${window.BillPayIcons[n] || ''}</svg>`;

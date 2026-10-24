@@ -128,14 +128,38 @@ paths:
     get:
       tags: [payment-occurrences]
       summary: Периоды оплаты за месяц (каждый месяц — отдельный период со своим статусом)
+      description: |
+        Поиск, фильтры и сортировка выполняются на сервере. Все параметры необязательны,
+        каждый передаётся не более одного раза; неверное значение → 400.
+        Без `include` ответ — массив периодов (как раньше). С `include=meta` — объект
+        со счётчиками вкладок статусов и итогами по валютам для отфильтрованного списка.
       parameters:
         - { $ref: '#/components/parameters/Month' }
-        - { name: status, in: query, schema: { type: string, enum: [paid, unpaid, overdue] } }
-        - { name: currency, in: query, schema: { $ref: '#/components/schemas/Currency' } }
+        - { $ref: '#/components/parameters/Q' }
+        - { $ref: '#/components/parameters/StatusFilter' }
+        - { $ref: '#/components/parameters/CurrencyList' }
+        - name: sort
+          in: query
+          description: |
+            Поле сортировки (по умолчанию due_date). amount — сначала группа валюты RUB → USD → EUR,
+            внутри группы по сумме (без конвертации). paid_at — периоды без даты оплаты всегда в конце.
+            status — overdue → unpaid → paid. При равенстве — по сроку и id.
+          schema: { type: string, enum: [name, amount, due_date, status, paid_at, overdue_days], default: due_date }
+        - { name: order, in: query, schema: { type: string, enum: [asc, desc], default: asc } }
+        - name: include
+          in: query
+          description: meta — вернуть OccurrencePage вместо массива
+          schema: { type: string, enum: [meta] }
       responses:
         '200':
           description: OK
-          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Occurrence' } } } }
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { type: array, items: { $ref: '#/components/schemas/Occurrence' } }
+                  - { $ref: '#/components/schemas/OccurrencePage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
   /payment-occurrences/{id}:
     parameters: [ { $ref: '#/components/parameters/Id' } ]
@@ -171,11 +195,17 @@ paths:
     get:
       tags: [payments]
       summary: Итоги за месяц отдельно по каждой валюте, без конвертации
-      parameters: [ { $ref: '#/components/parameters/Month' } ]
+      description: Принимает те же фильтры, что и список периодов — итоги считаются по отфильтрованным периодам.
+      parameters:
+        - { $ref: '#/components/parameters/Month' }
+        - { $ref: '#/components/parameters/Q' }
+        - { $ref: '#/components/parameters/StatusFilter' }
+        - { $ref: '#/components/parameters/CurrencyList' }
       responses:
         '200':
           description: OK
           content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Summary' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
   /users:
     get:
@@ -235,7 +265,11 @@ components:
   parameters:
     Id: { name: id, in: path, required: true, schema: { type: integer } }
     Month: { name: month, in: query, required: false, schema: { type: string, pattern: '^\d{4}-\d{2}$', example: '2026-10' }, description: Месяц YYYY-MM (по умолчанию текущий) }
+    Q: { name: q, in: query, required: false, schema: { type: string, maxLength: 100 }, description: 'Поиск по названию — подстрока без учёта регистра, пробелы по краям отбрасываются' }
+    StatusFilter: { name: status, in: query, required: false, schema: { type: string, enum: [all, paid, unpaid, overdue] }, description: 'Статус периода; all или пусто — все' }
+    CurrencyList: { name: currency, in: query, required: false, schema: { type: string, example: 'RUB,USD' }, description: 'Одна или несколько валют через запятую: RUB, USD, EUR' }
   responses:
+    BadRequest: { description: Неверный параметр запроса, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     Unauthorized: { description: Не авторизован, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     Forbidden: { description: Недостаточно прав, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     NotFound: { description: Не найдено, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
@@ -327,6 +361,23 @@ components:
         overdue: { type: number }
         total: { type: number }
         count: { type: integer }
+    OccurrencePage:
+      type: object
+      description: Ответ списка периодов при include=meta
+      properties:
+        month: { type: string, example: '2026-10' }
+        total: { type: integer, description: Всего периодов в месяце (без фильтров) }
+        count: { type: integer, description: Периодов после всех фильтров }
+        counts:
+          type: object
+          description: Счётчики вкладок статусов — с учётом q и currency, без фильтра status
+          properties:
+            all: { type: integer }
+            unpaid: { type: integer }
+            overdue: { type: integer }
+            paid: { type: integer }
+        totals: { type: array, description: 'Итоги по отфильтрованным периодам, отдельно по валютам, без конвертации', items: { $ref: '#/components/schemas/Summary' } }
+        items: { type: array, items: { $ref: '#/components/schemas/Occurrence' } }
     Meta:
       type: object
       properties:

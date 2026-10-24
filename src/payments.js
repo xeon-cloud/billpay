@@ -44,14 +44,61 @@ function createPayments(pool) {
     }
   }
 
+  // фильтры списка: q — подстрока названия (без учёта регистра), status, currency — одна или несколько валют
+  const STATUS_ORDER = { overdue: 0, unpaid: 1, paid: 2 };
+  const SORTS = {
+    name: (a, b) => a.name.localeCompare(b.name, 'ru'),
+    amount: (a, b) => a.amount - b.amount,
+    due_date: (a, b) => a.due_date.localeCompare(b.due_date),
+    status: (a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status],
+    paid_at: (a, b) => a.paid_at.localeCompare(b.paid_at),
+    overdue_days: (a, b) => a.overdue_days - b.overdue_days
+  };
+  const SORT_KEYS = Object.keys(SORTS);
+  const matches = (o, f) => {
+    if (f.q && !o.name.toLowerCase().includes(f.q.toLowerCase())) return false;
+    const cur = [].concat(f.currency || []);
+    if (cur.length && !cur.includes(o.currency)) return false;
+    if (f.status && o.status !== f.status) return false;
+    return true;
+  };
+  // сумма без конвертации: сначала группа валюты (RUB → USD → EUR), внутри — по сумме;
+  // без даты оплаты — всегда в конце; при равенстве — по сроку и id
+  function sortList(list, sort = 'due_date', order = 'asc') {
+    const f = SORTS[sort] || SORTS.due_date, d = order === 'desc' ? -1 : 1;
+    return list.sort((a, b) => {
+      if (sort === 'amount' && a.currency !== b.currency) return CURRENCIES.indexOf(a.currency) - CURRENCIES.indexOf(b.currency);
+      if (sort === 'paid_at' && !a.paid_at !== !b.paid_at) return a.paid_at ? -1 : 1;
+      const r = sort === 'paid_at' && !a.paid_at ? 0 : f(a, b) * d;
+      return r || a.due_date.localeCompare(b.due_date) || a.id - b.id;
+    });
+  }
+  function totals(list) {
+    const t = Object.fromEntries(CURRENCIES.map((c) => [c, { currency: c, to_pay: 0, paid: 0, overdue: 0, total: 0, count: 0 }]));
+    for (const o of list) {
+      const s = t[o.currency];
+      s[o.status === 'paid' ? 'paid' : o.status === 'overdue' ? 'overdue' : 'to_pay'] += o.amount;
+      s.total += o.amount; s.count++;
+    }
+    return Object.values(t).map((s) => ({ ...s, to_pay: round2(s.to_pay), paid: round2(s.paid), overdue: round2(s.overdue), total: round2(s.total) }));
+  }
+
   async function occurrences(month, filter = {}) {
     await ensureMonth(month);
     const today = D.today();
     const { rows } = await pool.query(`SELECT ${OCC_COLS} FROM payment_occurrences WHERE month = $1 ORDER BY due_date, id`, [month]);
-    return rows
-      .map((o) => view(o, today))
-      .filter((o) => !filter.status || o.status === filter.status)
-      .filter((o) => !filter.currency || o.currency === filter.currency);
+    const list = rows.map((o) => view(o, today)).filter((o) => matches(o, filter));
+    return filter.sort || filter.order ? sortList(list, filter.sort, filter.order) : list;
+  }
+
+  // страница списка: периоды по фильтрам + счётчики вкладок статусов (без фильтра статуса) + итоги по валютам
+  async function occurrencePage(month, filter = {}) {
+    const all = await occurrences(month);
+    const base = all.filter((o) => matches(o, { ...filter, status: undefined }));
+    const items = sortList(base.filter((o) => !filter.status || o.status === filter.status), filter.sort, filter.order);
+    const counts = { all: base.length, unpaid: 0, overdue: 0, paid: 0 };
+    base.forEach((o) => counts[o.status]++);
+    return { month, total: all.length, count: items.length, counts, totals: totals(items), items };
   }
 
   async function getOccurrence(id) {
@@ -59,14 +106,8 @@ function createPayments(pool) {
     return rows[0] || null;
   }
 
-  async function summary(month) {
-    const t = Object.fromEntries(CURRENCIES.map((c) => [c, { currency: c, to_pay: 0, paid: 0, overdue: 0, total: 0, count: 0 }]));
-    for (const o of await occurrences(month)) {
-      const s = t[o.currency];
-      s[o.status === 'paid' ? 'paid' : o.status === 'overdue' ? 'overdue' : 'to_pay'] += o.amount;
-      s.total += o.amount; s.count++;
-    }
-    return Object.values(t).map((s) => ({ ...s, to_pay: round2(s.to_pay), paid: round2(s.paid), overdue: round2(s.overdue), total: round2(s.total) }));
+  async function summary(month, filter = {}) {
+    return totals(await occurrences(month, filter));
   }
 
   async function reminders(month) {
@@ -187,7 +228,7 @@ function createPayments(pool) {
     return rows.length ? rows[0].value : fallback;
   }
 
-  return { CURRENCIES, status, view, ensureMonth, occurrences, getOccurrence, summary, reminders, listRecurring, getActiveRecurring, validateRecurring, createRecurring, updateRecurring, deleteRecurring, setPaid, getSetting };
+  return { CURRENCIES, SORT_KEYS, status, view, ensureMonth, occurrences, occurrencePage, getOccurrence, summary, reminders, listRecurring, getActiveRecurring, validateRecurring, createRecurring, updateRecurring, deleteRecurring, setPaid, getSetting };
 }
 
 module.exports = { createPayments, CURRENCIES };

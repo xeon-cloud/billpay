@@ -130,11 +130,48 @@
       `<a class="btn ghost hide-m" href="${monthUrl('/app', shiftMonth(VM, -1))}#history">${ic('history')}История</a>${isAdmin ? `<a class="btn hide-m" href="/app/admin#new">${ic('plus')}Новый платёж</a>` : ''}`,
       isAdmin ? `<a class="ibtn solid mo" href="/app/admin#new" aria-label="Новый платёж">${ic('plus')}</a>` : '');
     palette();
-    const [meta, occ] = await Promise.all([BillPayApi.getMeta(), BillPayApi.getOccurrences()]);
-    let FILTER = 'all';
-    sideCounts(occ); setHead();
+    $$('#history [data-ic], #sheet [data-ic]').forEach((e) => (e.outerHTML = ic(e.dataset.ic)));
+
+    // поиск, фильтры и сортировка периодов — на сервере; состояние хранится в адресе (?q=&status=&currency=&sort=&order=)
+    const CURS = ['RUB', 'USD', 'EUR'];
+    const SORTS = { name: 'Название', amount: 'Сумма', due_date: 'Срок', status: 'Статус', paid_at: 'Факт. дата', overdue_days: 'Просрочка' };
+    const DEF = { sort: 'due_date', order: 'asc' };
+    const firstDir = (k) => (k === 'amount' || k === 'overdue_days' ? 'desc' : 'asc');
+    const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 10 || h >= 20) ? b : c; };
+    const P = new URLSearchParams(location.search);
+    const F = {
+      q: (P.get('q') || '').slice(0, 100),
+      status: ST[P.get('status')] ? P.get('status') : 'all',
+      cur: new Set((P.get('currency') || '').toUpperCase().split(',').filter((c) => CURS.includes(c))),
+      sort: SORTS[P.get('sort')] ? P.get('sort') : DEF.sort,
+      order: P.get('order') === 'desc' ? 'desc' : P.get('order') === 'asc' ? 'asc' : SORTS[P.get('sort')] ? 'asc' : DEF.order
+    };
+    const qv = () => F.q.trim();
+    const curList = () => CURS.filter((c) => F.cur.has(c));
+    const isDefSort = () => F.sort === DEF.sort && F.order === DEF.order;
+    const filterQs = () => {
+      const p = new URLSearchParams();
+      if (qv()) p.set('q', qv());
+      if (F.status !== 'all') p.set('status', F.status);
+      if (F.cur.size) p.set('currency', curList().join(','));
+      if (!isDefSort()) { p.set('sort', F.sort); p.set('order', F.order); }
+      return p;
+    };
+    const monthLink = (m) => { const p = filterQs(); if (m !== CUR) p.set('month', m); const s = p.toString(); return `/app${s ? '?' + s : ''}#history`; };
+    const writeUrl = () => {
+      const p = filterQs(); if (VM !== CUR) p.set('month', VM);
+      const s = p.toString(); history.replaceState(null, '', location.pathname + (s ? '?' + s : '') + location.hash);
+      navMonths();
+    };
+    const navMonths = () => {
+      $('#mnav').innerHTML = `${IS_CUR ? '' : `<a class="more cur-m" href="${monthLink(CUR)}">Текущий</a>`}<a class="ibtn sm" href="${monthLink(shiftMonth(VM, -1))}" aria-label="Предыдущий месяц: ${mName(shiftMonth(VM, -1))}" title="${mName(shiftMonth(VM, -1))}">${ic('back')}</a><span class="mlabel">${monthName} ${year}</span><a class="ibtn sm" href="${monthLink(shiftMonth(VM, 1))}" aria-label="Следующий месяц: ${mName(shiftMonth(VM, 1))}" title="${mName(shiftMonth(VM, 1))}">${ic('chev')}</a>`;
+    };
+    const params = () => ({ q: qv(), status: F.status === 'all' ? '' : F.status, currency: curList().join(','), sort: F.sort, order: F.order });
+
+    const [meta, occ, first] = await Promise.all([BillPayApi.getMeta(), BillPayApi.getOccurrences(), BillPayApi.listOccurrences(params())]);
+    let PAGE = first, SEQ = 0;
+    sideCounts(occ); setHead(); navMonths();
     $('#today').innerHTML = todayChip();
-    $('#mnav').innerHTML = `<a class="more" href="${monthUrl('/app', shiftMonth(VM, -1))}#history">${ic('back')}${mName(shiftMonth(VM, -1))}</a>${IS_CUR ? '' : `<a class="more" href="/app#history">Текущий</a>`}<a class="more" href="${monthUrl('/app', shiftMonth(VM, 1))}#history">${mName(shiftMonth(VM, 1))}${ic('chev')}</a>`;
 
     $('#cards').innerHTML = ['RUB', 'USD', 'EUR'].map((c, i) => `<section class="card cur rise" style="--d:${i * 60}ms" id="${c}"><div class="ch"><span class="sym">${SYM[c]}</span><div><b>${c}</b><small>${CN[c]}</small></div></div>
       <div class="big" data-c="${c}" data-k="to_pay">${fmt(0, c)}</div><div class="sub">к оплате в ${monthIn}</div>
@@ -153,8 +190,14 @@
     $('#days').innerHTML = html;
     const td = $('.dy.td'); if (td && innerWidth <= 900) $('#days').scrollLeft = td.offsetLeft - 64;
 
-    const tabs = $('#tabs');
-    const counts = () => { ['unpaid', 'overdue', 'paid'].forEach((k) => ($(`[data-f=${k}] em`, tabs).textContent = occ.filter((o) => status(o) === k).length)); $('[data-f=all] em', tabs).textContent = occ.length; };
+    const tabs = $('#tabs'), hist = $('#history');
+    // подсветка совпадения в названии
+    const hl = (text) => {
+      const q = qv(); if (!q) return esc(text);
+      const lo = text.toLowerCase(), ql = q.toLowerCase(); let i = 0, out = '', j;
+      while ((j = lo.indexOf(ql, i)) !== -1) { out += esc(text.slice(i, j)) + '<mark>' + esc(text.slice(j, j + q.length)) + '</mark>'; i = j + q.length; }
+      return out + esc(text.slice(i));
+    };
     // дата оплаты — та, что укажет человек, не обязательно сегодня
     let PICK = null, EDIT = null;
     const editing = (o) => PICK === o.id || EDIT === o.id;
@@ -163,20 +206,70 @@
         const val = PICK === o.id ? TODAY : o.paid_at;
         return `<span class="fd"><span class="lb">Факт</span><input class="fdt" type="date" max="${TODAY}" value="${val}" data-date="${o.id}" aria-label="Фактическая дата оплаты"></span>`;
       }
-      if (o.paid_at) return `<span class="fd"><button type="button" class="fdb" data-fix="${o.id}" title="Исправить дату">${dmy(o.paid_at)}</button></span>`;
+      if (o.paid_at) return `<span class="fd"><span class="lb">Факт</span><button type="button" class="fdb" data-fix="${o.id}" title="Исправить дату">${dmy(o.paid_at)}</button></span>`;
       return `<span class="fd m"><span class="lb">Факт</span>—</span>`;
     };
-    const inner = (o) => { const s = status(o), l = late(o); return `<span class="nm">${esc(o.name)}<small>ежемесячно</small></span><span class="amt">${num(o.amount, o.currency)}<span class="cc">${o.currency}</span></span><span class="due"><span class="lb">Срок</span>${dmy(o.due_date)}</span><span class="stc"><span class="pill ${s}"><i></i>${ST[s]}</span></span>${fact(o)}<span class="lt ${l ? 'late' : 'm'}"><span class="lb">Просрочка</span>${l ? l + '\u00a0дн.' : '—'}</span><span class="ac">${editing(o) ? `<button class="mp" data-save="${o.id}" title="Сохранить дату"><span class="ck">${CHK}</span><span class="tx">Сохранить</span></button>` : s === 'paid' ? `<button class="un" data-un="${o.id}" title="Снять отметку">${ic('undo')}<span class="tx">Снять отметку</span></button>` : `<button class="mp" data-pay="${o.id}" title="Отметить оплату"><span class="ck">${CHK}</span><span class="tx">Отметить оплату</span></button>`}</span>`; };
-    const rows = (mode) => {
-      const list = occ.filter((o) => FILTER === 'all' || status(o) === FILTER);
-      $('#history').classList.toggle('is-empty', !occ.length);
-      $('#rows').innerHTML = list.length ? list.map((o, i) => `<div class="grid rw ${mode ? 'rise' : ''}" id="r-${o.id}" style="--d:${(mode === 'load' ? 240 : 0) + i * 30}ms">${inner(o)}</div>`).join('')
-        : occ.length ? '<div class="empty">Нет периодов с таким статусом</div>'
-        : !IS_CUR ? emptyCta('history', `В ${monthIn} ${year} периодов нет`, 'Периоды появляются для каждого активного регулярного платежа начиная с месяца первой оплаты.', `<a class="btn ghost" href="/app">${ic('back')}К текущему месяцу</a>`)
-        : isAdmin ? emptyCta('card', 'Платежей пока нет', `Добавьте первый регулярный платёж: BillPay будет создавать период каждый месяц и напоминать за ${S.remindDaysBefore} дня до срока.`, `<a class="btn" href="/app/admin#new">${ic('plus')}Добавить первый платёж</a>`)
-        : emptyCta('card', 'Платежей пока нет', 'Администратор ещё не добавил регулярные платежи. Как только он это сделает, они появятся здесь.');
-      counts();
+    const inner = (o) => { const s = status(o), l = late(o); return `<span class="nm">${hl(o.name)}<small>ежемесячно</small></span><span class="amt">${num(o.amount, o.currency)}<span class="cc">${o.currency}</span></span><span class="due"><span class="lb">Срок</span>${dmy(o.due_date)}</span><span class="stc"><span class="pill ${s}"><i></i>${ST[s]}</span></span>${fact(o)}<span class="lt ${l ? 'late' : 'm'}"><span class="lb">Просрочка</span>${l ? l + '\u00a0дн.' : '—'}</span><span class="ac">${editing(o) ? `<button class="mp" data-save="${o.id}" title="Сохранить дату"><span class="ck">${CHK}</span><span class="tx">Сохранить</span></button>` : s === 'paid' ? `<button class="un" data-un="${o.id}" title="Снять отметку">${ic('undo')}<span class="tx">Снять отметку</span></button>` : `<button class="mp" data-pay="${o.id}" title="Отметить оплату"><span class="ck">${CHK}</span><span class="tx">Отметить оплату</span></button>`}</span>`; };
+    const row = (o, i, mode) => `<div class="grid rw ${mode ? 'rise' : ''}" id="r-${o.id}" style="--d:${(mode === 'load' ? 240 : 0) + Math.min(i, 12) * 26}ms">${inner(o)}</div>`;
+    const head = () => {
+      $('#ghead').innerHTML = [['name'], ['amount', 'r'], ['due_date'], ['status'], ['paid_at'], ['overdue_days', 'r']].map(([k, r]) => {
+        const on = F.sort === k;
+        return `<button type="button" class="hs ${r ? 'r' : ''} ${on ? 'on' : ''}" data-sort="${k}" aria-sort="${on ? (F.order === 'asc' ? 'ascending' : 'descending') : 'none'}" title="${k === 'amount' ? 'Сортировка внутри каждой валюты' : 'Сортировать'}"><span>${SORTS[k]}</span><span class="ar">${on ? ic(F.order === 'asc' ? 'up' : 'dn') : ic('sort')}</span></button>`;
+      }).join('') + '<span></span>';
     };
+    const controls = () => {
+      const c = PAGE.counts;
+      $$('.chip', tabs).forEach((b) => { const on = b.dataset.f === F.status; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); $('em', b).textContent = c[b.dataset.f]; });
+      const inp = $('#pq'); if (document.activeElement !== inp && inp.value !== F.q) inp.value = F.q;
+      $('#pqclear').hidden = !F.q; $('#psearch').classList.toggle('has', !!F.q);
+      $('#curVal').textContent = F.cur.size ? curList().join(', ') : 'все';
+      $('[data-dd=cur]').classList.toggle('set', F.cur.size > 0);
+      $('#curOpts').innerHTML = CURS.map((k) => `<button type="button" class="opt ${F.cur.has(k) ? 'on' : ''}" data-cur="${k}" role="menuitemcheckbox" aria-checked="${F.cur.has(k)}"><span class="cb">${CHK}</span><span class="cd">${SYM[k]}</span>${k}<em>${occ.filter((o) => o.currency === k).length}</em></button>`).join('');
+      $('#resetL').hidden = !(qv() || F.cur.size || F.status !== 'all' || !isDefSort());
+      const nf = (F.cur.size ? 1 : 0) + (F.status !== 'all' ? 1 : 0) + (isDefSort() ? 0 : 1);
+      $('#fcount').hidden = !nf; $('#fcount').textContent = nf;
+      const n = PAGE.count, all = PAGE.total;
+      $('#psum').innerHTML = `<div class="cnt"><b>${n === all ? n : `${n} из ${all}`}</b><span>${plural(n, 'платёж', 'платежа', 'платежей')}${n === all ? ' в периоде' : ' найдено'}</span></div>
+        <div class="tots">${PAGE.totals.map((t) => `<div class="tot ${t.count ? '' : 'z'}"><span class="cd">${SYM[t.currency]}</span><div><b>${t.count ? fmt(t.total, t.currency) : '—'}</b><small>${t.count ? [t.to_pay ? `к оплате ${fmt(t.to_pay, t.currency)}` : '', t.overdue ? `<i class="od">просрочено ${fmt(t.overdue, t.currency)}</i>` : '', t.paid ? `оплачено ${fmt(t.paid, t.currency)}` : ''].filter(Boolean).join(' · ') : `нет платежей в ${t.currency}`}</small></div></div>`).join('')}</div>
+        <span class="sum-n" title="Итоги считаются отдельно по каждой валюте">без конвертации</span>`;
+      head(); sheet();
+    };
+    const rows = (mode) => {
+      const list = PAGE.items;
+      hist.classList.toggle('is-empty', !list.length);
+      hist.classList.toggle('no-data', !PAGE.total);
+      if (!PAGE.total) {
+        $('#rows').innerHTML = !IS_CUR ? emptyCta('history', `В ${monthIn} ${year} периодов нет`, 'Периоды появляются для каждого активного регулярного платежа начиная с месяца первой оплаты.', `<a class="btn ghost" href="/app">${ic('back')}К текущему месяцу</a>`)
+          : isAdmin ? emptyCta('card', 'Платежей пока нет', `Добавьте первый регулярный платёж: BillPay будет создавать период каждый месяц и напоминать за ${S.remindDaysBefore} дня до срока.`, `<a class="btn" href="/app/admin#new">${ic('plus')}Добавить первый платёж</a>`)
+          : emptyCta('card', 'Платежей пока нет', 'Администратор ещё не добавил регулярные платежи. Как только он это сделает, они появятся здесь.');
+      } else if (!list.length) {
+        $('#rows').innerHTML = emptyCta('search', 'Ничего не найдено', `${qv() ? `По запросу «${esc(qv())}»` : 'По выбранным фильтрам'} в ${monthIn} ${year} нет платежей. Измените запрос или сбросьте фильтры.`, `<button class="btn" type="button" data-reset>${ic('undo')}Сбросить фильтры</button>`);
+      } else if (F.sort === 'amount') {
+        // суммы не конвертируются — группы по валютам, внутри — по сумме
+        let i = 0;
+        $('#rows').innerHTML = PAGE.totals.filter((t) => t.count).map((t) => `<div class="grp"><span class="cd">${SYM[t.currency]}</span><b>${t.currency}</b><span>${t.count} ${plural(t.count, 'платёж', 'платежа', 'платежей')} · ${fmt(t.total, t.currency)}</span></div>` + list.filter((o) => o.currency === t.currency).map((o) => row(o, i++, mode)).join('')).join('');
+      } else {
+        $('#rows').innerHTML = list.map((o, i) => row(o, i, mode)).join('');
+      }
+    };
+    const render = (mode) => { controls(); rows(mode); };
+    // перезапрос списка; quiet — после отметки оплаты: счётчики и итоги сразу, строки — только если порядок/состав изменился
+    async function load(mode = 'filter', quiet = false) {
+      const my = ++SEQ;
+      let p; try { p = await BillPayApi.listOccurrences(params()); } catch (e) { toast(esc(e.message)); return; }
+      if (my !== SEQ) return;
+      const ids = (x) => x.items.map((o) => o.id).join(',');
+      const moved = ids(p) !== ids(PAGE);
+      PAGE = p; controls();
+      if (!quiet) rows(mode);
+      else if (moved) setTimeout(() => { if (my === SEQ && !PICK && !EDIT) rows(); }, 650);
+    }
+    let DEB = 0;
+    const apply = (mode = 'filter') => { clearTimeout(DEB); PICK = null; EDIT = null; writeUrl(); controls(); load(mode); };
+
+    // одна отметка — общий объект для карточек и списка
+    const find = (id) => PAGE.items.find((x) => x.id === id) || occ.find((x) => x.id === id);
+    const setLocal = (id, paidAt) => [PAGE.items, occ].forEach((l) => l.forEach((x) => { if (x.id === id) { x.paid_at = paidAt; x.is_paid = !!paidAt; x.status = status(x); x.overdue_days = late(x); } }));
     const refresh = async (first) => {
       const sum = await BillPayApi.getSummary();
       sum.forEach((s) => {
@@ -190,38 +283,94 @@
       });
       occ.forEach((o) => { const d = $(`[data-dot="${o.id}"]`); if (d) d.className = 'dt ' + status(o); const t = $(`[data-tst="${o.id}"]`); if (t) t.textContent = ST[status(o)].toLowerCase(); });
     };
-    const paint = (o) => { const row = $('#r-' + o.id); if (!row) return rows(); row.classList.remove('rise'); row.innerHTML = inner(o); $$('.pill,.fd,.lt,.ac', row).forEach((e) => e.classList.add('swap')); };
-    const focusDate = (id) => { const inp = $(`[data-date="${id}"]`); if (inp) inp.focus(); };
-    function askDate(id) {
-      const o = occ.find((x) => x.id === id); if (!o || o.paid_at) return;
-      PICK = id; EDIT = null; paint(o); focusDate(id);
+    const paint = (o) => { const r = $('#r-' + o.id); if (!r) return; r.classList.remove('rise'); r.innerHTML = inner(o); $$('.pill,.fd,.lt,.ac', r).forEach((e) => e.classList.add('swap')); };
+    const focusDate = (id) => { const inp = $(`[data-date="${id}"]`); if (inp) { inp.focus(); inp.closest('.rw').scrollIntoView({ block: 'nearest', behavior: RM ? 'auto' : 'smooth' }); } };
+    // период скрыт фильтрами (например, из командной палитры) — сбрасываем фильтры, чтобы строка была видна
+    async function reveal(id) {
+      if ($('#r-' + id)) return;
+      Object.assign(F, { q: '', status: 'all', sort: DEF.sort, order: DEF.order }); F.cur.clear();
+      writeUrl(); await load('filter');
+    }
+    async function askDate(id) {
+      const o = find(id); if (!o || o.paid_at) return;
+      await reveal(id);
+      PICK = id; EDIT = null; paint(find(id)); focusDate(id);
     }
     function openDate(id) {
-      const o = occ.find((x) => x.id === id); if (!o || !o.paid_at) return;
+      const o = find(id); if (!o || !o.paid_at) return;
       EDIT = id; PICK = null; paint(o); focusDate(id);
     }
     // сохраняем только enter или кнопкой, смена дня в календаре ещё не запись
     async function commitDate(id, date) {
-      const o = occ.find((x) => x.id === id); if (!o) return;
+      const o = find(id); if (!o) return;
       if (!date) return toast('Укажите фактическую дату');
       if (date > TODAY) return toast('Дата не может быть в будущем');
       const fresh = !o.paid_at;
       if (o.paid_at && date === o.paid_at) { PICK = null; EDIT = null; paint(o); return; }
-      try { const u = await BillPayApi.setPaid(id, date); o.paid_at = u.paid_at || date; }
+      try { const u = await BillPayApi.setPaid(id, date); setLocal(id, u.paid_at || date); }
       catch (e) { return toast(esc(e.message)); }
       PICK = null; EDIT = null; paint(o);
-      const row = $('#r-' + id); if (row && fresh) row.classList.add('flash');
-      if (fresh && FILTER !== 'all' && FILTER !== 'paid') setTimeout(() => rows(), 650);
-      refresh(); counts();
+      const r = $('#r-' + id); if (r && fresh) r.classList.add('flash');
+      refresh(); load('filter', true);
       toast(fresh ? `${esc(o.name)} — оплачено<small>${dmy(o.paid_at)}</small>` : `${esc(o.name)} — дата ${dmy(o.paid_at)}`, fresh ? () => unpay(id) : undefined);
     }
     async function unpay(id) {
-      const o = occ.find((x) => x.id === id); if (!o) return;
+      const o = find(id); if (!o) return;
       try { await BillPayApi.setPaid(id, null); } catch (e) { return toast(esc(e.message)); }
-      o.paid_at = null; if (PICK === id) PICK = null; if (EDIT === id) EDIT = null;
-      paint(o); refresh(); counts();
+      setLocal(id, null); if (PICK === id) PICK = null; if (EDIT === id) EDIT = null;
+      paint(o); refresh(); load('filter', true);
     }
-    tabs.addEventListener('click', (e) => { const b = e.target.closest('[data-f]'); if (!b) return; $$('.chip', tabs).forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); }); FILTER = b.dataset.f; rows('filter'); });
+
+    /* мобильный bottom sheet: статус, валюта, сортировка */
+    const sh = $('#sheet');
+    function sheet() {
+      const c = PAGE.counts;
+      $('#shStatus').innerHTML = [['all', 'Все'], ['unpaid', 'Не оплачено'], ['overdue', 'Просрочено'], ['paid', 'Оплачено']].map(([k, l]) => `<button type="button" class="chip ${F.status === k ? 'on' : ''}" data-f="${k}" aria-pressed="${F.status === k}">${l}<em>${c[k]}</em></button>`).join('');
+      $('#shCur').innerHTML = CURS.map((k) => `<button type="button" class="chip ${F.cur.has(k) ? 'on' : ''}" data-cur="${k}" aria-pressed="${F.cur.has(k)}">${SYM[k]} ${k}</button>`).join('');
+      $('#shSort').innerHTML = Object.entries(SORTS).map(([k, l]) => `<button type="button" class="srow ${F.sort === k ? 'on' : ''}" data-sk="${k}" data-sd="${F.sort === k ? (F.order === 'asc' ? 'desc' : 'asc') : firstDir(k)}"><span class="rb"></span>${l}<span class="sd">${F.sort === k ? (F.order === 'asc' ? ic('up') + 'по возрастанию' : ic('dn') + 'по убыванию') : ''}</span></button>`).join('');
+      const n = PAGE.count; $('#shApply').textContent = n ? `Показать ${n} ${plural(n, 'платёж', 'платежа', 'платежей')}` : 'Ничего не найдено';
+    }
+    const openSheet = () => { sh.classList.add('on'); sh.setAttribute('aria-hidden', 'false'); };
+    const closeSheet = () => { sh.classList.remove('on'); sh.setAttribute('aria-hidden', 'true'); };
+    const closeDd = () => $$('.dd.open').forEach((d) => { d.classList.remove('open'); $('[data-dd]', d).setAttribute('aria-expanded', 'false'); });
+    const resetAll = () => { Object.assign(F, { q: '', status: 'all', sort: DEF.sort, order: DEF.order }); F.cur.clear(); $('#pq').value = ''; apply(); };
+
+    $('#pq').addEventListener('input', (e) => {
+      F.q = e.target.value.slice(0, 100);
+      $('#pqclear').hidden = !F.q; $('#psearch').classList.toggle('has', !!F.q);
+      clearTimeout(DEB); DEB = setTimeout(() => apply(), 250);
+    });
+    $('#pqclear').addEventListener('click', () => { F.q = ''; $('#pq').value = ''; apply(); $('#pq').focus(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || $('#ov').classList.contains('on')) return;
+      if (document.activeElement === $('#pq') && F.q) { F.q = ''; $('#pq').value = ''; apply(); return; }
+      closeDd(); closeSheet();
+    });
+    const onFilters = (e) => {
+      const t = e.target;
+      const tab = t.closest('[data-f]'); if (tab) { F.status = tab.dataset.f; apply(); return true; }
+      const c = t.closest('[data-cur]'); if (c) { F.cur.has(c.dataset.cur) ? F.cur.delete(c.dataset.cur) : F.cur.add(c.dataset.cur); apply(); return true; }
+      const sk = t.closest('[data-sk]'); if (sk) { F.sort = sk.dataset.sk; F.order = sk.dataset.sd; apply(); return true; }
+      if (t.closest('[data-reset]')) { resetAll(); return true; }
+      return false;
+    };
+    document.addEventListener('click', (e) => {
+      const t = e.target;
+      const dd = t.closest('[data-dd]');
+      if (dd) { const box = dd.parentElement, was = box.classList.contains('open'); closeDd(); box.classList.toggle('open', !was); dd.setAttribute('aria-expanded', !was); return; }
+      // строки списка перерисовываются раньше, поэтому проверяем путь события, а не текущий DOM
+      if (!e.composedPath().some((n) => n.classList && n.classList.contains('pop'))) closeDd();
+      if (t.closest('[data-sheet]')) { openSheet(); return; }
+      if (t.closest('[data-close-sheet]') || t === sh) { closeSheet(); return; }
+    });
+    hist.addEventListener('click', (e) => {
+      if (onFilters(e)) return;
+      const hs = e.target.closest('[data-sort]');
+      if (hs) { const k = hs.dataset.sort; if (F.sort === k) F.order = F.order === 'asc' ? 'desc' : 'asc'; else { F.sort = k; F.order = firstDir(k); } apply(); }
+    });
+    sh.addEventListener('click', onFilters);
+    const bar = $('#bar'); addEventListener('scroll', () => bar.classList.toggle('stuck', innerWidth <= 900 && bar.getBoundingClientRect().top <= 61), { passive: true });
+
     $('#rows').addEventListener('click', (e) => {
       const b = e.target.closest('[data-pay]'); if (b) return askDate(+b.dataset.pay);
       const fix = e.target.closest('[data-fix]'); if (fix) return openDate(+fix.dataset.fix);
@@ -234,7 +383,7 @@
       commitDate(+inp.dataset.date, inp.value);
     });
     COMMANDS = () => occ.filter((o) => !o.paid_at).map((o) => ({ g: 1, t: `Отметить оплату — ${o.name}`, m: `${fmt(o.amount, o.currency)} · ${dm(o.due_date)}`, ic: 'check', run: () => askDate(o.id) }));
-    rows('load'); ringBells();
+    writeUrl(); render('load'); ringBells();
     setTimeout(() => refresh(true), RM ? 0 : 200);
   }
 
