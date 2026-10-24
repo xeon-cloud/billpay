@@ -8,6 +8,12 @@ info:
     выполнить login, и cookie подставится в следующие запросы. Для внешних клиентов можно передавать
     `access_token` в заголовке `Authorization: Bearer <token>`.
     Роли: **admin** управляет платежами и пользователями, **user** смотрит список и меняет статус и дату оплаты.
+
+    Исходящий вебхук: если в .env задан `WEBHOOK_URL`, бот за `REMIND_DAYS_BEFORE` дней до срока отправляет на этот адрес
+    `POST` с JSON `WebhookReminder` (один раз на период; при ошибке или ответе не 2xx повтор каждую минуту, таймаут 10 с).
+    Заголовки: `X-BillPay-Event: payment.reminder`, `X-BillPay-Delivery` (id доставки, одинаковый при повторах) и, если задан
+    `WEBHOOK_SECRET`, `X-BillPay-Signature: sha256=<hex>` — HMAC-SHA256 от сырого тела запроса с ключом `WEBHOOK_SECRET`.
+    Описание запроса — в `x-webhooks` и схеме `WebhookReminder`.
 servers:
   - url: /api/v1
 security:
@@ -477,6 +483,13 @@ components:
           type: object
           description: 'Email-оповещения через SMTP: включены, если в .env заданы SMTP_HOST и SMTP_FROM'
           properties: { enabled: { type: boolean } }
+        webhook:
+          type: object
+          description: 'Исходящий вебхук: включён, если в .env задан WEBHOOK_URL. Секрет не возвращается'
+          properties:
+            enabled: { type: boolean }
+            host: { type: string, nullable: true, description: 'Хост WEBHOOK_URL, только для admin', example: hooks.company.ru }
+            signed: { type: boolean, description: 'Задан WEBHOOK_SECRET — запросы подписываются' }
         budgets: { type: object, additionalProperties: { type: number } }
         reminders:
           type: array
@@ -487,3 +500,37 @@ components:
               send_date: { type: string, format: date }
               time: { type: string }
               status: { type: string, enum: [sent, scheduled] }
+    WebhookReminder:
+      type: object
+      description: Тело исходящего вебхука о напоминании
+      required: [event, delivery_id, sent_at, data]
+      properties:
+        event: { type: string, enum: [payment.reminder] }
+        delivery_id: { type: string, description: 'Совпадает с X-BillPay-Delivery', example: '42' }
+        sent_at: { type: string, format: date-time }
+        data:
+          type: object
+          required: [occurrence_id, payment_id, name, amount, currency, due_date, status, days_left, url]
+          properties:
+            occurrence_id: { type: integer, description: Id периода }
+            payment_id: { type: integer, description: Id регулярного платежа }
+            name: { type: string, example: Аренда офиса }
+            amount: { type: number, example: 185000 }
+            currency: { $ref: '#/components/schemas/Currency' }
+            due_date: { type: string, format: date, example: '2026-11-05' }
+            status: { type: string, enum: [unpaid, overdue] }
+            days_left: { type: integer, description: 'Дней до срока; 0 — сегодня, меньше 0 — просрочено', example: 3 }
+            url: { type: string, nullable: true, description: 'Ссылка на день в календаре, если задан APP_URL', example: 'https://billpay.company.ru/app/calendar?date=2026-11-05' }
+x-webhooks:
+  paymentReminder:
+    post:
+      summary: Напоминание о неоплаченном периоде (запрос от BillPay на WEBHOOK_URL)
+      parameters:
+        - { name: X-BillPay-Event, in: header, required: true, schema: { type: string, enum: [payment.reminder] } }
+        - { name: X-BillPay-Delivery, in: header, required: true, schema: { type: string } }
+        - { name: X-BillPay-Signature, in: header, required: false, description: 'Только если задан WEBHOOK_SECRET', schema: { type: string, pattern: '^sha256=[0-9a-f]{64}$' } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/WebhookReminder' } } }
+      responses:
+        '200': { description: 'Любой 2xx — доставлено; иначе повтор через минуту' }

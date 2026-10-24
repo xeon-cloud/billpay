@@ -6,7 +6,7 @@ process.env.ADMIN_PASSWORD = 'test-admin-pass';
 process.env.SESSION_SECRET = 'test-secret-test-secret-test-secret';
 process.env.REMIND_DAYS_BEFORE = '3';
 process.env.APP_URL = 'https://billpay.example.ru/';
-for (const k of ['SMTP_HOST', 'SMTP_FROM', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']) process.env[k] = '';
+for (const k of ['SMTP_HOST', 'SMTP_FROM', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'WEBHOOK_URL', 'WEBHOOK_SECRET']) process.env[k] = '';
 
 const nodemailer = require('nodemailer');
 const config = require('../src/config');
@@ -146,11 +146,11 @@ test('бот: письмо каждому с почтой, без дублей �
 
   const off = await dispatch(pool, payments);
   assert.equal(off.skipped, 'config');
-  assert.deepEqual(off.off, { telegram: true, email: true });
+  assert.deepEqual(off.off, { telegram: true, email: true, webhook: true });
 
   const box = mailbox();
   const r1 = await dispatch(pool, payments, { transport: box.t });
-  assert.deepEqual(r1.off, { telegram: true, email: false });
+  assert.deepEqual(r1.off, { telegram: true, email: false, webhook: true });
   assert.deepEqual(r1.emailed.map((x) => x.to).sort(), ['a.smirnova@company.ru', 'finance@company.ru', 'ivan@company.ru']);
   assert.equal(box.sent.length, 3);
   const m = box.sent.find((x) => x.to === 'a.smirnova@company.ru');

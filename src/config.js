@@ -46,9 +46,22 @@ const config = {
     pass: env.SMTP_PASS || '',
     from: (env.SMTP_FROM || '').trim()
   },
+  webhook: {
+    url: (env.WEBHOOK_URL || '').trim(),
+    secret: env.WEBHOOK_SECRET || ''
+  },
   appUrl: (env.APP_URL || '').trim().replace(/\/+$/, '')
 };
 config.emailEnabled = !!(config.smtp.host && config.smtp.from);
+if (config.webhook.url) {
+  let ok = false;
+  try { ok = ['http:', 'https:'].includes(new URL(config.webhook.url).protocol); } catch {}
+  if (!ok) {
+    console.warn('[billpay] WEBHOOK_URL не похож на http(s)-адрес: вебхук выключен.');
+    config.webhook.url = '';
+  }
+}
+config.webhookEnabled = !!config.webhook.url;
 
 if (!config.admin.password) {
   throw new Error('ADMIN_PASSWORD не задан. Главный администратор обязателен (см. .env.example).');

@@ -4,6 +4,7 @@ const { createPool, waitForDb, migrate } = require('./db');
 const { createPayments } = require('./payments');
 const { formatReminder, sendMessage } = require('./telegram');
 const { createTransport, sendReminder } = require('./mailer');
+const { sendWebhook, hostOf } = require('./webhook');
 
 const LOCK = 727365;
 const INTERVAL_MS = 60 * 1000;
@@ -11,7 +12,7 @@ const INTERVAL_MS = 60 * 1000;
 async function dueOccurrences(client, today, channel = 'telegram', recipient = '') {
   const until = D.addDays(today, config.remindDaysBefore);
   const { rows } = await client.query(
-    `SELECT o.id, o.name, o.amount, o.currency::text AS currency, o.due_date::text AS due_date
+    `SELECT o.id, o.recurring_payment_id, o.name, o.amount, o.currency::text AS currency, o.due_date::text AS due_date
        FROM payment_occurrences o
        JOIN recurring_payments rp ON rp.id = o.recurring_payment_id
       WHERE o.paid_at IS NULL
@@ -50,12 +51,13 @@ async function deliver(client, today, channel, recipient, send) {
   for (const o of await dueOccurrences(client, today, channel, recipient)) {
     const id = await claim(client, o.id, today, channel, recipient);
     if (!id) continue;
-    const label = channel === 'email' ? `${o.name} · ${o.due_date} → ${recipient}` : `${o.name} · ${o.due_date}`;
+    const to = channel === 'webhook' ? hostOf(recipient) : recipient;
+    const label = to ? `${o.name} · ${o.due_date} → ${to}` : `${o.name} · ${o.due_date}`;
     try {
-      await send(o);
+      await send(o, id);
       await client.query(`UPDATE reminders SET status = 'sent', error = NULL, sent_at = now() WHERE id = $1`, [id]);
       done.push(o.id);
-      console.log(`[billpay] ${channel === 'email' ? 'письмо' : 'напоминание'} отправлено: ${label}`);
+      console.log(`[billpay] ${{ email: 'письмо отправлено', webhook: 'вебхук доставлен' }[channel] || 'напоминание отправлено'}: ${label}`);
     } catch (e) {
       const msg = String(e.message || e).slice(0, 500);
       await client.query(`UPDATE reminders SET status = 'failed', error = $2, sent_at = now() WHERE id = $1`, [id, msg]);
@@ -68,17 +70,18 @@ async function deliver(client, today, channel, recipient, send) {
 let sharedTransport = null;
 const mailTransport = () => (sharedTransport ||= createTransport());
 
-async function dispatch(pool, payments, { transport } = {}) {
+async function dispatch(pool, payments, { transport, webhook = config.webhook } = {}) {
   const telegram = !!(config.telegramBotToken && config.telegramChatId);
   const email = !!transport || config.emailEnabled;
-  const off = { telegram: !telegram, email: !email };
-  if (!telegram && !email) return { skipped: 'config', off, sent: [], emailed: [] };
+  const hook = !!(webhook && webhook.url);
+  const off = { telegram: !telegram, email: !email, webhook: !hook };
+  if (!telegram && !email && !hook) return { skipped: 'config', off, sent: [], emailed: [], hooked: [] };
   const today = D.today();
   const month = today.slice(0, 7);
   await payments.ensureMonth(month);
   await payments.ensureMonth(D.addMonths(month, 1));
   const client = await pool.connect();
-  const sent = [], emailed = [];
+  const sent = [], emailed = [], hooked = [];
   try {
     await client.query('SELECT pg_advisory_lock($1)', [LOCK]);
     if (telegram) {
@@ -92,7 +95,10 @@ async function dispatch(pool, payments, { transport } = {}) {
         emailed.push(...ids.map((id) => ({ occurrence_id: id, to })));
       }
     }
-    return { sent, emailed, off };
+    if (hook) {
+      hooked.push(...await deliver(client, today, 'webhook', webhook.url, (o, id) => sendWebhook(o, { url: webhook.url, secret: webhook.secret, today, deliveryId: String(id) })));
+    }
+    return { sent, emailed, hooked, off };
   } finally {
     await client.query('SELECT pg_advisory_unlock($1)', [LOCK]).catch(() => {});
     client.release();
@@ -110,9 +116,12 @@ async function main() {
       (e) => console.error(`[billpay] SMTP недоступен (${config.smtp.host}:${config.smtp.port || 587}): ${e.message}. Письма будут повторяться каждую минуту.`)
     );
   }
+  if (config.webhookEnabled) {
+    console.log(`[billpay] вебхук включён: ${hostOf(config.webhook.url)}, ${config.webhook.secret ? 'подпись HMAC-SHA256' : 'без подписи'}`);
+  }
   let timer;
   let busy = false;
-  const warned = { telegram: false, email: false };
+  const warned = { telegram: false, email: false, webhook: false };
   const tick = async () => {
     if (busy) return;
     busy = true;
@@ -125,6 +134,10 @@ async function main() {
       if (res.off.email && !warned.email) {
         warned.email = true;
         console.log('[billpay] почта выключена: задайте SMTP_HOST и SMTP_FROM');
+      }
+      if (res.off.webhook && !warned.webhook) {
+        warned.webhook = true;
+        console.log('[billpay] вебхук выключен: задайте WEBHOOK_URL');
       }
     } catch (e) {
       console.error('[billpay] проверка напоминаний:', e.message);

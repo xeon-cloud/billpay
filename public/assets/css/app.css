@@ -309,10 +309,9 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5;stro
 .pc li{display:flex;gap:10px;font-size:13px;line-height:20px;color:var(--fg2)}
 .pc li::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--paid);margin-top:7px;flex:none}
 .pc li.x{color:var(--mut)}.pc li.x::before{background:var(--red)}
-.kv{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));overflow:hidden}
 .kv .v.off{color:var(--mut)}
-.kv>div{padding:16px 20px;min-width:0}
-.kv>div+div{border-left:1px solid var(--line)}
+.kv>div{padding:16px 20px;min-width:0;box-shadow:-1px 0 0 var(--line),0 -1px 0 var(--line)}
 .kv .v{margin-top:8px;font-size:14px;line-height:20px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .form{padding:24px;position:sticky;top:calc(var(--top) + 32px)}
 .fh{display:flex;align-items:center;gap:12px;margin-bottom:24px}
@@ -468,8 +467,6 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5;stro
   .ur>.ec{grid-area:e}
   .ur>.un2{grid-area:u}.ur>.rc{grid-area:r}.ur>.dc{grid-area:d;text-align:right}.ur>.ia{grid-area:a}
   .perm{grid-template-columns:1fr;padding:16px}
-  .kv{grid-template-columns:1fr}
-  .kv>div+div{border-left:0;border-top:1px solid var(--line)}
   .form{padding:20px}
   .aside{grid-template-columns:1fr}
   .mhead{padding:12px 16px}

@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const config = require('../config');
 const D = require('../dates');
 const { parseEmail } = require('../mailer');
+const { hostOf } = require('../webhook');
 
 module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
   const r = express.Router();
@@ -54,6 +55,7 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
     res.json({
       today: D.today(), month, timezone: config.timezone, telegramChat: config.telegramChat,
       remindDaysBefore: config.remindDaysBefore, currentUser: req.user, email: { enabled: config.emailEnabled },
+      webhook: { enabled: config.webhookEnabled, host: config.webhookEnabled && req.user.role === 'admin' ? hostOf(config.webhook.url) : null, signed: config.webhookEnabled && !!config.webhook.secret },
       budgets: orderBudgets(await payments.getSetting('budgets')), reminders: await payments.reminders(month)
     });
   });
