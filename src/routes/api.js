@@ -66,7 +66,6 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
     res.status(204).end();
   });
 
-  // общие фильтры списка периодов и итогов
   function listFilter(req, res) {
     const { q, status, currency, sort, order } = req.query;
     const one = (v) => (Array.isArray(v) ? NaN : v);
@@ -102,7 +101,7 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
     const f = listFilter(req, res); if (!f) return;
     const { include } = req.query;
     if (include !== undefined && include !== 'meta') return bad(res, 'include: meta');
-    // include=meta — объект со счётчиками и итогами; без него — массив, как раньше
+    // со счётчиками
     res.json(include === 'meta' ? await payments.occurrencePage(month, f) : await payments.occurrences(month, f));
   });
 
@@ -128,6 +127,16 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
   });
 
   r.get('/payments/summary', requireAuth, async (req, res) => {
+    const { date, include } = req.query;
+    if (date !== undefined) {
+      if (req.query.month !== undefined) return bad(res, 'Передайте либо month, либо date');
+      if (['q', 'status', 'currency', 'sort', 'order'].some((k) => req.query[k] !== undefined)) return bad(res, 'date не сочетается с фильтрами списка');
+      if (!D.isDate(date)) return bad(res, 'date: дата YYYY-MM-DD');
+      if (date.slice(0, 7) > D.addMonths(D.today().slice(0, 7), 12)) return bad(res, 'date: не дальше 12 месяцев вперёд');
+      if (include !== undefined && include !== 'items') return bad(res, 'include: items');
+      return res.json(await payments.summaryOnDate(date, { items: include === 'items' }));
+    }
+    if (include !== undefined) return bad(res, 'include: только вместе с date');
     const month = monthParam(req);
     if (!D.isMonth(month)) return bad(res, 'month: формат YYYY-MM');
     const f = listFilter(req, res); if (!f) return;
@@ -141,7 +150,7 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
 
   r.post('/users', requireAdmin, async (req, res) => {
     const { login, password, name, role } = req.body || {};
-    // админа через панель не создаём
+    // не из панели
     if (role !== undefined && role !== 'user') return bad(res, 'Администратора нельзя добавить через панель: он задаётся в .env', 403);
     const err = [];
     if (typeof login !== 'string' || !LOGIN.test(login)) err.push('login: 3–32 символа (латиница, цифры, . _ -)');

@@ -135,7 +135,7 @@ test('список периодов: поиск, фильтры, сортиро�
   await call('PATCH', `/api/v1/payment-occurrences/${d.id}`, { cookie: c, body: { is_paid: true, paid_at: D.addDays(D18, 2) } });
   const page = async (qs, cookie = c) => { const r = await call('GET', `/api/v1/payment-occurrences?month=${M}&include=meta&${qs}`, { cookie }); assert.equal(r.status, 200, r.text); return r.json; };
 
-  // поиск без учёта регистра + итоги отдельно по валютам, без конвертации
+  // без конвертации
   let p = await page('q=фт');
   assert.equal(p.month, M);
   assert.ok(p.total >= 4);
@@ -144,7 +144,7 @@ test('список периодов: поиск, фильтры, сортиро�
   assert.deepEqual(p.totals.map((t) => [t.currency, t.count, t.total, t.paid, t.overdue, t.to_pay]), [['RUB', 2, 130000, 45000, 85000, 0], ['USD', 1, 48, 0, 48, 0], ['EUR', 1, 10, 0, 10, 0]]);
   assert.deepEqual((await page('q=%D0%B0%D1%80%D0%B5%D0%BD%D0%B4%D0%B0')).items.filter((o) => o.name.startsWith('ФТ')).map((o) => o.name).sort(), ['ФТ Аренда офиса', 'ФТ Аренда склада']);
 
-  // валюты списком через запятую (регистр не важен); статус не меняет счётчики вкладок
+  // список валют
   p = await page('q=фт&currency=rub,EUR');
   assert.deepEqual(p.items.map((o) => o.currency).sort(), ['EUR', 'RUB', 'RUB']);
   assert.equal(p.totals.find((t) => t.currency === 'USD').count, 0);
@@ -152,7 +152,7 @@ test('список периодов: поиск, фильтры, сортиро�
   assert.deepEqual([p.count, p.counts.all, p.items[0].name], [1, 4, 'ФТ Аренда склада']);
   assert.deepEqual(p.totals.find((t) => t.currency === 'RUB').total, 45000);
 
-  // сортировка: сумма — внутри групп валют RUB → USD → EUR
+  // внутри валюты
   p = await page('q=фт&sort=amount&order=desc');
   assert.deepEqual(p.items.map((o) => [o.currency, o.amount]), [['RUB', 85000], ['RUB', 45000], ['USD', 48], ['EUR', 10]]);
   p = await page('q=фт&sort=amount&order=asc');
@@ -169,19 +169,16 @@ test('список периодов: поиск, фильтры, сортиро�
   assert.equal(p.items[p.items.length - 1].name, 'ФТ Аренда склада');
   assert.deepEqual((await page('q=фт&sort=due_date&order=asc')).items.map((o) => o.id), [...p.items].sort((x, y) => x.id - y.id).map((o) => o.id));
 
-  // пустой результат
   p = await page('q=zzz-нет-такого');
   assert.deepEqual([p.count, p.items, p.counts.all], [0, [], 0]);
   assert.ok(p.totals.every((t) => t.count === 0 && t.total === 0));
 
-  // без include=meta — по-прежнему массив, фильтры тоже работают; итоги принимают те же фильтры
   const arr = (await call('GET', `/api/v1/payment-occurrences?month=${M}&q=фт&currency=USD,EUR&sort=amount&order=desc`, { cookie: c })).json;
   assert.ok(Array.isArray(arr));
   assert.deepEqual(arr.map((o) => o.currency), ['USD', 'EUR']);
   const sum = (await call('GET', `/api/v1/payments/summary?month=${M}&q=фт&status=overdue`, { cookie: c })).json;
   assert.deepEqual(sum.map((t) => [t.currency, t.overdue, t.count]), [['RUB', 85000, 1], ['USD', 48, 1], ['EUR', 10, 1]]);
 
-  // валидация
   for (const qs of ['sort=foo', 'order=up', 'currency=GBP', 'currency=RUB,XXX', 'status=late', 'include=all', `q=${'я'.repeat(101)}`, 'currency=RUB&currency=USD', 'sort=amount&sort=name']) {
     assert.equal((await call('GET', `/api/v1/payment-occurrences?month=${M}&${qs}`, { cookie: c })).status, 400, qs);
   }
@@ -224,7 +221,7 @@ test('валидация платежа и защита главного адм�
 });
 
 test('каждый месяц — новый период; срок 31-го → последний день месяца; без дублей', async () => {
-  // месяц с 31-м числом, следующий за ним короче
+  // короткий месяц
   let m = D.addMonths(CUR, 1);
   while (D.daysInMonth(m) !== 31 || D.daysInMonth(D.addMonths(m, 1)) === 31) m = D.addMonths(m, 1);
   const next = D.addMonths(m, 1);
@@ -308,6 +305,93 @@ test('logout очищает cookie', async () => {
   assert.match(r.headers.get('set-cookie'), /billpay_session=;/);
 });
 
+test('итоги на дату: оплачено/к оплате — месяц даты, просрочено — все периоды до даты, включая прошлые месяцы', async () => {
+  const W = D.addMonths(CUR, -2), X = D.addMonths(CUR, -1), DX = `${X}-20`;
+  // ищем 31-е
+  let M31 = W; while (D.daysInMonth(M31) < 31) M31 = D.addMonths(M31, -1);
+  const mk = (name, amount, currency, next_date) => createPayment({ name, amount, currency, next_date });
+  const P = {
+    late: await mk('НД оплата после даты', 101, 'USD', `${W}-15`),
+    dueOn: await mk('НД срок в дату', 2002, 'RUB', DX),
+    paid: await mk('НД оплачено до даты', 3003, 'RUB', `${X}-05`),
+    d31: await mk('НД 31-е', 31, 'EUR', `${M31}-31`),
+    prev: await mk('НД прошлый месяц', 50, 'EUR', `${W}-10`),
+    del: await mk('НД удалённый', 70, 'USD', `${W}-12`)
+  };
+  const ids = new Set(Object.values(P).map((p) => p.id));
+  // лениво
+  const { rows: before } = await pool.query('SELECT month::text AS month FROM payment_occurrences WHERE recurring_payment_id = $1', [P.prev.id]);
+  assert.ok(before.some((r) => r.month === W) && !before.some((r) => r.month === X));
+
+  const occIn = async (rp, m) => (await occ(m)).find((o) => o.recurring_payment_id === rp.id);
+  const pay = async (rp, m, date) => { const o = await occIn(rp, m); assert.equal((await call('PATCH', `/api/v1/payment-occurrences/${o.id}`, { cookie: A, body: { is_paid: true, paid_at: date } })).status, 200); };
+  await pay(P.late, W, `${W}-15`);
+  await pay(P.late, X, `${X}-25`); // оплачено позже даты итогов
+  await pay(P.paid, X, `${X}-05`);
+  await pay(P.del, W, `${W}-12`);
+  assert.equal((await call('DELETE', `/api/v1/recurring-payments/${P.del.id}`, { cookie: A })).status, 204);
+  // досоздание
+  await pool.query('DELETE FROM payment_occurrences WHERE recurring_payment_id = $1 AND month = $2', [P.prev.id, X]);
+
+  const get = (qs, cookie = A) => call('GET', `/api/v1/payments/summary?${qs}`, { cookie });
+  const r = await get(`date=${DX}&include=items`);
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.json.as_of, DX);
+  assert.equal(r.json.month, X);
+  const mine = r.json.items.filter((o) => ids.has(o.recurring_payment_id));
+  const b = (rp, m) => { const o = mine.find((x) => x.recurring_payment_id === rp.id && x.month === m); return o ? o.on_date.bucket : null; };
+  assert.equal(b(P.late, X), 'overdue', 'оплачено позже даты → на дату просрочено');
+  assert.equal(b(P.late, W), null, 'оплаченный вовремя прошлый период не попадает');
+  assert.equal(b(P.dueOn, X), 'to_pay', 'срок в саму дату → к оплате');
+  assert.equal(b(P.paid, X), 'paid');
+  assert.equal(b(P.prev, W), 'overdue', 'неоплаченный период прошлого месяца → просрочено');
+  assert.equal(b(P.prev, X), 'overdue', 'месяц X досоздан и просрочен');
+  const d31 = mine.find((o) => o.recurring_payment_id === P.d31.id && o.month === X);
+  assert.equal(d31.due_date, D.dueInMonth(X, 31), '31-е → последний день месяца');
+  assert.equal(d31.day, 31, 'число по графику отдаётся в периоде');
+  assert.equal(d31.on_date.bucket, 'to_pay');
+  assert.equal(mine.find((o) => o.recurring_payment_id === P.prev.id && o.month === W).on_date.overdue_days, D.diffDays(DX, `${W}-10`));
+
+  // прошлые месяцы
+  for (const t of r.json.totals) {
+    const xs = r.json.items.filter((o) => o.currency === t.currency), sum = (f) => Math.round(xs.filter(f).reduce((a, o) => a + o.amount, 0) * 100) / 100;
+    assert.equal(t.paid, sum((o) => o.on_date.bucket === 'paid'));
+    assert.equal(t.to_pay, sum((o) => o.on_date.bucket === 'to_pay'));
+    assert.equal(t.overdue, sum((o) => o.on_date.bucket === 'overdue'));
+    assert.equal(t.overdue_earlier, sum((o) => o.on_date.bucket === 'overdue' && o.month < X));
+    assert.equal(t.month_total, sum((o) => o.month === X));
+    assert.equal(t.count, xs.length);
+  }
+  // тот же массив
+  const plain = (await get(`date=${DX}`)).json;
+  assert.deepEqual(plain.map((t) => t.currency), ['RUB', 'USD', 'EUR']);
+  assert.ok(plain.every((t) => t.as_of === DX && 'paid_count' in t && 'to_pay_count' in t && 'overdue_count' in t));
+  assert.deepEqual(plain.map((t) => t.overdue), r.json.totals.map((t) => t.overdue));
+
+  // без будущих
+  const fut = D.addDays(TODAY, 40), F2 = await get(`date=${fut}&include=items`);
+  assert.equal(F2.status, 200);
+  assert.ok(!F2.json.items.some((o) => o.recurring_payment_id === P.del.id && o.month >= CUR), 'удалённый — без периодов с месяца удаления');
+  // только отмеченное
+  const fm = F2.json.items.filter((o) => ids.has(o.recurring_payment_id));
+  assert.equal(F2.json.month, fut.slice(0, 7));
+  for (const o of fm) {
+    if (o.month === fut.slice(0, 7)) assert.equal(o.on_date.bucket, o.paid_at && o.paid_at <= fut ? 'paid' : o.due_date >= fut ? 'to_pay' : 'overdue');
+    else assert.ok(o.due_date < fut && !o.paid_at && o.on_date.bucket === 'overdue');
+  }
+  assert.ok(fm.some((o) => o.recurring_payment_id === P.dueOn.id && o.month === X && o.on_date.bucket === 'overdue'));
+
+  await call('POST', '/api/v1/users', { cookie: A, body: { login: 'ndtest', password: 'secret1', name: 'НД', role: 'user' } });
+  const u = await login('ndtest', 'secret1');
+  assert.equal((await get(`date=${DX}`, u)).status, 200);
+
+  for (const qs of [`date=${DX}&month=${X}`, 'date=2026-02-30', 'date=26-10-01', `date=${DX}&q=x`, `date=${DX}&currency=RUB`, `date=${DX}&include=all`, 'include=items', `date=${D.addMonths(CUR, 13)}-01`]) {
+    assert.equal((await get(qs)).status, 400, qs);
+  }
+  assert.equal((await call('GET', `/api/v1/payments/summary?date=${DX}`)).status, 401);
+  for (const k of ['late', 'dueOn', 'paid', 'd31', 'prev']) await call('DELETE', `/api/v1/recurring-payments/${P[k].id}`, { cookie: A });
+});
+
 test('миграции повторно не применяются; reset оставляет только главного админа; id не переиспользуются', async () => {
   assert.deepEqual(await migrate(pool, { log: false }), []);
   const { rows: [{ max }] } = await pool.query('SELECT max(id)::int AS max FROM users');
@@ -321,7 +405,7 @@ test('миграции повторно не применяются; reset ос�
   const u = await call('POST', '/api/v1/users', { cookie: A, body: { login: 'after.reset', password: 'secret1', name: 'X' } });
   assert.equal(u.status, 201);
   assert.ok(u.json.id > max, 'id удалённых пользователей не выдаются повторно');
-  // повторный старт не должен выдать старый id
+  // старый id
   await createApp({ pool });
   const v = await call('POST', '/api/v1/users', { cookie: A, body: { login: 'after.restart', password: 'secret1', name: 'Y' } });
   assert.ok(v.json.id > u.json.id);

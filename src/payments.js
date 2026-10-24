@@ -6,7 +6,8 @@ const CURRENCIES = ['RUB', 'USD', 'EUR'];
 const round2 = (n) => Math.round(n * 100) / 100;
 
 const RP_COLS = 'id, name, amount, currency::text AS currency, periodicity, day, start_date, active, created_at, created_by, deleted_at';
-const OCC_COLS = 'id, recurring_payment_id, month::text AS month, name, amount, currency::text AS currency, due_date, paid_at, paid_by';
+// день графика
+const OCC_COLS = 'id, recurring_payment_id, month::text AS month, name, amount, currency::text AS currency, due_date, paid_at, paid_by, (SELECT rp.day FROM recurring_payments rp WHERE rp.id = recurring_payment_id) AS day';
 
 function createPayments(pool) {
   function status(o, today = D.today()) {
@@ -18,12 +19,12 @@ function createPayments(pool) {
     return {
       id: o.id, recurring_payment_id: o.recurring_payment_id, month: o.month,
       name: o.name, amount: o.amount, currency: o.currency,
-      due_date: o.due_date, paid_at: o.paid_at, is_paid: !!o.paid_at,
+      due_date: o.due_date, day: o.day, paid_at: o.paid_at, is_paid: !!o.paid_at,
       status: st, overdue_days: Math.max(0, D.diffDays(o.paid_at || today, o.due_date))
     };
   }
 
-  // период месяца создаётся при первом запросе; конфликт при гонке игнорируем
+  // гонку игнорируем
   async function ensureMonth(month, db = pool) {
     const limit = D.addMonths(D.today().slice(0, 7), 12);
     if (month > limit) return;
@@ -44,7 +45,6 @@ function createPayments(pool) {
     }
   }
 
-  // фильтры списка: q — подстрока названия (без учёта регистра), status, currency — одна или несколько валют
   const STATUS_ORDER = { overdue: 0, unpaid: 1, paid: 2 };
   const SORTS = {
     name: (a, b) => a.name.localeCompare(b.name, 'ru'),
@@ -62,8 +62,7 @@ function createPayments(pool) {
     if (f.status && o.status !== f.status) return false;
     return true;
   };
-  // сумма без конвертации: сначала группа валюты (RUB → USD → EUR), внутри — по сумме;
-  // без даты оплаты — всегда в конце; при равенстве — по сроку и id
+  // без конвертации
   function sortList(list, sort = 'due_date', order = 'asc') {
     const f = SORTS[sort] || SORTS.due_date, d = order === 'desc' ? -1 : 1;
     return list.sort((a, b) => {
@@ -91,7 +90,7 @@ function createPayments(pool) {
     return filter.sort || filter.order ? sortList(list, filter.sort, filter.order) : list;
   }
 
-  // страница списка: периоды по фильтрам + счётчики вкладок статусов (без фильтра статуса) + итоги по валютам
+  // счётчики вкладок
   async function occurrencePage(month, filter = {}) {
     const all = await occurrences(month);
     const base = all.filter((o) => matches(o, { ...filter, status: undefined }));
@@ -110,6 +109,49 @@ function createPayments(pool) {
     return totals(await occurrences(month, filter));
   }
 
+  // досоздаём месяцы
+  async function ensureThrough(month) {
+    const { rows: [r] } = await pool.query("SELECT to_char(min(start_date), 'YYYY-MM') AS m FROM recurring_payments");
+    if (!r.m) return;
+    for (let m = r.m; m <= month; m = D.addMonths(m, 1)) await ensureMonth(m);
+  }
+
+  // корзины на дату
+  async function summaryOnDate(date, { items: withItems = false } = {}) {
+    const month = date.slice(0, 7), today = D.today();
+    await ensureThrough(month);
+    const { rows } = await pool.query(
+      `SELECT ${OCC_COLS} FROM payment_occurrences
+        WHERE month = $1 OR (due_date < $2 AND (paid_at IS NULL OR paid_at > $2))
+        ORDER BY due_date, id`,
+      [month, date]
+    );
+    const t = Object.fromEntries(CURRENCIES.map((c) => [c, {
+      currency: c, paid: 0, paid_count: 0, to_pay: 0, to_pay_count: 0, overdue: 0, overdue_count: 0,
+      overdue_earlier: 0, overdue_earlier_count: 0, total: 0, count: 0, month_total: 0, month_count: 0
+    }]));
+    const items = [];
+    for (const o of rows) {
+      const paidByDate = !!o.paid_at && o.paid_at <= date;
+      const bucket = o.month === month ? (paidByDate ? 'paid' : o.due_date >= date ? 'to_pay' : 'overdue') : 'overdue';
+      const s = t[o.currency];
+      s[bucket] += o.amount; s[bucket + '_count']++;
+      s.total += o.amount; s.count++;
+      if (o.month === month) { s.month_total += o.amount; s.month_count++; }
+      if (bucket === 'overdue' && o.month < month) { s.overdue_earlier += o.amount; s.overdue_earlier_count++; }
+      if (withItems) {
+        items.push({ ...view(o, today), on_date: { bucket, status: bucket === 'to_pay' ? 'unpaid' : bucket, overdue_days: bucket === 'overdue' ? D.diffDays(date, o.due_date) : 0 } });
+      }
+    }
+    const totals = Object.values(t).map((s) => {
+      const out = { ...s };
+      for (const k of ['paid', 'to_pay', 'overdue', 'overdue_earlier', 'total', 'month_total']) out[k] = round2(s[k]);
+      return out;
+    });
+    return withItems ? { as_of: date, month, totals, items } : totals.map((x) => ({ ...x, as_of: date }));
+  }
+
+  // окно напоминания
   async function reminders(month) {
     const today = D.today(), before = config.remindDaysBefore;
     return (await occurrences(month))
@@ -118,6 +160,7 @@ function createPayments(pool) {
       .sort((a, b) => a.send_date.localeCompare(b.send_date));
   }
 
+  // ближайший срок
   async function nextDates(rps) {
     if (!rps.length) return new Map();
     await ensureMonth(D.today().slice(0, 7));
@@ -176,7 +219,7 @@ function createPayments(pool) {
     return rpViewOne(rp);
   }
 
-  // правка только неоплаченных периодов с текущего месяца
+  // только неоплаченные
   async function updateRecurring(rp, b) {
     const updated = await tx(pool, async (c) => {
       const name = b.name !== undefined ? b.name.trim() : rp.name;
@@ -205,7 +248,7 @@ function createPayments(pool) {
     return updated ? rpViewOne(updated) : null;
   }
 
-  // скрываем платёж и будущие неоплаченные периоды, оплаченное оставляем
+  // оплаченное остаётся
   async function deleteRecurring(rp) {
     return tx(pool, async (c) => {
       const { rowCount } = await c.query('UPDATE recurring_payments SET active = false, deleted_at = $2 WHERE id = $1 AND active', [rp.id, D.today()]);
@@ -228,7 +271,7 @@ function createPayments(pool) {
     return rows.length ? rows[0].value : fallback;
   }
 
-  return { CURRENCIES, SORT_KEYS, status, view, ensureMonth, occurrences, occurrencePage, getOccurrence, summary, reminders, listRecurring, getActiveRecurring, validateRecurring, createRecurring, updateRecurring, deleteRecurring, setPaid, getSetting };
+  return { CURRENCIES, SORT_KEYS, status, view, ensureMonth, occurrences, occurrencePage, getOccurrence, summary, summaryOnDate, reminders, listRecurring, getActiveRecurring, validateRecurring, createRecurring, updateRecurring, deleteRecurring, setPaid, getSetting };
 }
 
 module.exports = { createPayments, CURRENCIES };

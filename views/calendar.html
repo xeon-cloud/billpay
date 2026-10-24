@@ -22,6 +22,7 @@
 <link rel="stylesheet" href="/assets/fonts/fonts.css">
 <link rel="stylesheet" href="/assets/css/tokens.css">
 <link rel="stylesheet" href="/assets/css/app.css">
+<link rel="stylesheet" href="/assets/css/calendar.css">
 <!-- Тема до первой отрисовки — без мигания -->
 <script>try{var t=localStorage.getItem('billpay-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=t;document.querySelector('meta[name=theme-color]').content=t==='light'?'#F4F3EF':'#0A0A0A'}catch(e){}</script>
 </head>
@@ -36,8 +37,12 @@
         <span class="today" id="today"></span>
       </div>
       <div class="cal-wrap">
-        <section class="card" id="month"></section>
+        <div class="cal-main">
+          <section class="card" id="month"></section>
+          <section class="card" id="ondate"></section>
+        </div>
         <div class="aside">
+          <section class="card" id="day"></section>
           <section class="card" id="upcoming"></section>
           <section class="card tgc" id="cal-tg"></section>
         </div>

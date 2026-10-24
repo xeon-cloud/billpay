@@ -132,7 +132,7 @@
     palette();
     $$('#history [data-ic], #sheet [data-ic]').forEach((e) => (e.outerHTML = ic(e.dataset.ic)));
 
-    // поиск, фильтры и сортировка периодов — на сервере; состояние хранится в адресе (?q=&status=&currency=&sort=&order=)
+    // в адресе
     const CURS = ['RUB', 'USD', 'EUR'];
     const SORTS = { name: 'Название', amount: 'Сумма', due_date: 'Срок', status: 'Статус', paid_at: 'Факт. дата', overdue_days: 'Просрочка' };
     const DEF = { sort: 'due_date', order: 'asc' };
@@ -191,14 +191,13 @@
     const td = $('.dy.td'); if (td && innerWidth <= 900) $('#days').scrollLeft = td.offsetLeft - 64;
 
     const tabs = $('#tabs'), hist = $('#history');
-    // подсветка совпадения в названии
     const hl = (text) => {
       const q = qv(); if (!q) return esc(text);
       const lo = text.toLowerCase(), ql = q.toLowerCase(); let i = 0, out = '', j;
       while ((j = lo.indexOf(ql, i)) !== -1) { out += esc(text.slice(i, j)) + '<mark>' + esc(text.slice(j, j + q.length)) + '</mark>'; i = j + q.length; }
       return out + esc(text.slice(i));
     };
-    // дата оплаты — та, что укажет человек, не обязательно сегодня
+    // своя дата
     let PICK = null, EDIT = null;
     const editing = (o) => PICK === o.id || EDIT === o.id;
     const fact = (o) => {
@@ -245,7 +244,7 @@
       } else if (!list.length) {
         $('#rows').innerHTML = emptyCta('search', 'Ничего не найдено', `${qv() ? `По запросу «${esc(qv())}»` : 'По выбранным фильтрам'} в ${monthIn} ${year} нет платежей. Измените запрос или сбросьте фильтры.`, `<button class="btn" type="button" data-reset>${ic('undo')}Сбросить фильтры</button>`);
       } else if (F.sort === 'amount') {
-        // суммы не конвертируются — группы по валютам, внутри — по сумме
+        // группы валют
         let i = 0;
         $('#rows').innerHTML = PAGE.totals.filter((t) => t.count).map((t) => `<div class="grp"><span class="cd">${SYM[t.currency]}</span><b>${t.currency}</b><span>${t.count} ${plural(t.count, 'платёж', 'платежа', 'платежей')} · ${fmt(t.total, t.currency)}</span></div>` + list.filter((o) => o.currency === t.currency).map((o) => row(o, i++, mode)).join('')).join('');
       } else {
@@ -253,7 +252,7 @@
       }
     };
     const render = (mode) => { controls(); rows(mode); };
-    // перезапрос списка; quiet — после отметки оплаты: счётчики и итоги сразу, строки — только если порядок/состав изменился
+    // тихая перерисовка
     async function load(mode = 'filter', quiet = false) {
       const my = ++SEQ;
       let p; try { p = await BillPayApi.listOccurrences(params()); } catch (e) { toast(esc(e.message)); return; }
@@ -267,7 +266,6 @@
     let DEB = 0;
     const apply = (mode = 'filter') => { clearTimeout(DEB); PICK = null; EDIT = null; writeUrl(); controls(); load(mode); };
 
-    // одна отметка — общий объект для карточек и списка
     const find = (id) => PAGE.items.find((x) => x.id === id) || occ.find((x) => x.id === id);
     const setLocal = (id, paidAt) => [PAGE.items, occ].forEach((l) => l.forEach((x) => { if (x.id === id) { x.paid_at = paidAt; x.is_paid = !!paidAt; x.status = status(x); x.overdue_days = late(x); } }));
     const refresh = async (first) => {
@@ -275,7 +273,6 @@
       sum.forEach((s) => {
         ['to_pay', 'paid', 'overdue'].forEach((k) => { const n = $(`[data-c="${s.currency}"][data-k="${k}"]`); const from = +(n.dataset.v || 0); n.dataset.v = s[k]; tween(n, from, s[k], s.currency, first ? 1100 : 700); });
         $(`[data-odw="${s.currency}"]`).className = s.overdue ? 'od' : 'z';
-        // бюджет из настроек, иначе доля оплаченного
         const b = (meta.budgets && meta.budgets[s.currency]) || 0, base = b || s.total;
         $(`[data-blt="${s.currency}"]`).textContent = b ? 'Бюджет месяца' : 'Оплачено за месяц';
         $(`[data-bar="${s.currency}"]`).style.width = (base ? Math.max(2, Math.min(100, (s.paid / base) * 100)) : 0) + '%';
@@ -285,7 +282,7 @@
     };
     const paint = (o) => { const r = $('#r-' + o.id); if (!r) return; r.classList.remove('rise'); r.innerHTML = inner(o); $$('.pill,.fd,.lt,.ac', r).forEach((e) => e.classList.add('swap')); };
     const focusDate = (id) => { const inp = $(`[data-date="${id}"]`); if (inp) { inp.focus(); inp.closest('.rw').scrollIntoView({ block: 'nearest', behavior: RM ? 'auto' : 'smooth' }); } };
-    // период скрыт фильтрами (например, из командной палитры) — сбрасываем фильтры, чтобы строка была видна
+    // сброс фильтра
     async function reveal(id) {
       if ($('#r-' + id)) return;
       Object.assign(F, { q: '', status: 'all', sort: DEF.sort, order: DEF.order }); F.cur.clear();
@@ -300,7 +297,7 @@
       const o = find(id); if (!o || !o.paid_at) return;
       EDIT = id; PICK = null; paint(o); focusDate(id);
     }
-    // сохраняем только enter или кнопкой, смена дня в календаре ещё не запись
+    // ручная запись
     async function commitDate(id, date) {
       const o = find(id); if (!o) return;
       if (!date) return toast('Укажите фактическую дату');
@@ -321,7 +318,6 @@
       paint(o); refresh(); load('filter', true);
     }
 
-    /* мобильный bottom sheet: статус, валюта, сортировка */
     const sh = $('#sheet');
     function sheet() {
       const c = PAGE.counts;
@@ -358,7 +354,7 @@
       const t = e.target;
       const dd = t.closest('[data-dd]');
       if (dd) { const box = dd.parentElement, was = box.classList.contains('open'); closeDd(); box.classList.toggle('open', !was); dd.setAttribute('aria-expanded', !was); return; }
-      // строки списка перерисовываются раньше, поэтому проверяем путь события, а не текущий DOM
+      // путь клика
       if (!e.composedPath().some((n) => n.classList && n.classList.contains('pop'))) closeDd();
       if (t.closest('[data-sheet]')) { openSheet(); return; }
       if (t.closest('[data-close-sheet]') || t === sh) { closeSheet(); return; }
@@ -392,16 +388,99 @@
     palette();
     const [meta, occ] = await Promise.all([BillPayApi.getMeta(), BillPayApi.getOccurrences()]); sideCounts(occ); setHead();
     $('#today').innerHTML = todayChip();
+    const MONTHS_G = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+    const WD = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+    const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 10 || h >= 20) ? b : c; };
+    const pays = (n) => `${n} ${plural(n, 'платёж', 'платежа', 'платежей')}`;
+    const CURS = ['RUB', 'USD', 'EUR'];
+    const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '') && !isNaN(Date.parse(d)) && new Date(d + 'T00:00:00Z').toISOString().slice(0, 10) === d;
+    const addD = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
+    const longDate = (d) => `${+d.slice(8)} ${MONTHS_G[+d.slice(5, 7) - 1]}`;
+    const mLabel = (m, ref) => MONTHS[+m.slice(5, 7) - 1].toLowerCase() + (m.slice(0, 4) !== ref.slice(0, 4) ? ' ' + m.slice(0, 4) : '');
     const y = +year, m = +VM.slice(5, 7), first = (new Date(y, m - 1, 1).getDay() + 6) % 7, dim = new Date(y, m, 0).getDate(), prev = new Date(y, m - 1, 0).getDate();
-    let cells = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'].map((w) => `<div class="wd lbl">${w}</div>`).join('');
-    const total = Math.ceil((first + dim) / 7) * 7;
-    for (let i = 0; i < total; i++) {
-      const d = i - first + 1, inM = d >= 1 && d <= dim, iso = inM ? `${VM}-${String(d).padStart(2, '0')}` : '';
-      const label = inM ? d : d < 1 ? prev + d : d - dim;
-      const os = inM ? occ.filter((o) => o.due_date === iso) : [], rem = inM && meta.reminders.find((r) => r.send_date === iso), ro = rem && occ.find((o) => o.id === rem.occurrence_id);
-      cells += `<div class="mc ${inM ? '' : 'out'} ${iso === TODAY ? 'td' : ''} ${i % 7 >= 5 ? 'we' : ''} ${i >= total - 7 ? 'lr' : ''}"><span class="n">${label}</span>${os.map((o) => `<div class="ev ${status(o)}" title="${esc(o.name)} · ${ST[status(o)]}"><i></i><b>${esc(o.name)}</b><span>${fmt(o.amount, o.currency)}</span></div>`).join('')}${ro ? `<div class="remc" title="Напоминание: ${esc(ro.name)}">${ic('bell')}<span>${esc(ro.name)}</span></div>` : ''}</div>`;
+
+    // день в адресе
+    const qd = new URLSearchParams(location.search).get('date');
+    let SEL = isDate(qd) && qd.slice(0, 7) === VM ? qd : IS_CUR ? TODAY : `${VM}-01`;
+    const calUrl = (d) => { const p = new URLSearchParams(); if (d.slice(0, 7) !== CUR) p.set('month', d.slice(0, 7)); if (d !== TODAY) p.set('date', d); const s = p.toString(); return '/app/calendar' + (s ? '?' + s : ''); };
+    const go = (d) => { if (d.slice(0, 7) !== VM) { location.href = calUrl(d); return; } select(d); };
+
+    function grid() {
+      let cells = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'].map((w) => `<div class="wd lbl">${w}</div>`).join('');
+      const total = Math.ceil((first + dim) / 7) * 7;
+      for (let i = 0; i < total; i++) {
+        const d = i - first + 1, inM = d >= 1 && d <= dim, iso = inM ? `${VM}-${String(d).padStart(2, '0')}` : '';
+        const label = inM ? d : d < 1 ? prev + d : d - dim;
+        const os = inM ? occ.filter((o) => o.due_date === iso) : [], rems = inM ? meta.reminders.filter((r) => r.send_date === iso) : [];
+        const cls = ['mc', inM ? 'pick' : 'out', iso === TODAY ? 'td' : '', iso === SEL ? 'sel' : '', i % 7 >= 5 ? 'we' : '', i >= total - 7 ? 'lr' : ''].join(' ');
+        const attrs = inM ? `data-day="${iso}" role="button" tabindex="${iso === SEL ? 0 : -1}" aria-pressed="${iso === SEL}" aria-label="${longDate(iso)}: ${os.length ? pays(os.length) : 'сроков нет'}"` : 'aria-hidden="true"';
+        cells += `<div class="${cls}" ${attrs}><span class="n">${label}</span><div class="evs">${os.map((o) => { const sh = o.day && o.day > +o.due_date.slice(8); return `<div class="ev ${status(o)}" title="${esc(o.name)} · ${ST[status(o)]}${sh ? ` · по графику ${o.day}-е → последний день месяца` : ''}"><i></i><b>${esc(o.name)}</b><span>${fmt(o.amount, o.currency)}${sh ? ` · <em class="sh">${o.day}→${+o.due_date.slice(8)}</em>` : ''}</span></div>`; }).join('')}</div>${rems.map((r) => { const ro = occ.find((o) => o.id === r.occurrence_id); return ro ? `<div class="remc" title="Напоминание: ${esc(ro.name)}">${ic('bell')}<span>${esc(ro.name)}</span></div>` : ''; }).join('')}</div>`;
+      }
+      $('#month').innerHTML = `<div class="mhead"><span class="h3">${monthName} ${year}</span>${IS_CUR ? '' : `<a class="btn ghost sm" href="/app/calendar">Сегодня</a>`}<a class="ibtn sm" href="${monthUrl('/app/calendar', shiftMonth(VM, -1))}" aria-label="Предыдущий месяц" title="${mName(shiftMonth(VM, -1))}">${ic('back')}</a><a class="ibtn sm" href="${monthUrl('/app/calendar', shiftMonth(VM, 1))}" aria-label="Следующий месяц" title="${mName(shiftMonth(VM, 1))}">${ic('chev')}</a></div>
+        <div class="mgrid" role="grid" aria-label="${monthName} ${year}">${cells}</div>
+        <div class="cleg"><span><i class="paid"></i>оплачено</span><span><i class="unpaid"></i>не оплачено</span><span><i class="overdue"></i>просрочено</span><span>${ic('bell')}напоминание в Telegram</span><span class="chint">Нажмите на день — платежи и итоги на эту дату</span></div>`;
     }
-    $('#month').innerHTML = `<div class="mhead"><span class="h3">${monthName} ${year}</span>${IS_CUR ? '' : `<a class="btn ghost sm" href="/app/calendar">Сегодня</a>`}<a class="ibtn sm" href="${monthUrl('/app/calendar', shiftMonth(VM, -1))}" aria-label="Предыдущий месяц" title="${mName(shiftMonth(VM, -1))}">${ic('back')}</a><a class="ibtn sm" href="${monthUrl('/app/calendar', shiftMonth(VM, 1))}" aria-label="Следующий месяц" title="${mName(shiftMonth(VM, 1))}">${ic('chev')}</a></div><div class="mgrid">${cells}</div>`;
+
+    function day() {
+      const os = occ.filter((o) => o.due_date === SEL), rems = meta.reminders.filter((r) => r.send_date === SEL);
+      const dd = days(SEL, TODAY), rel = dd === 0 ? 'сегодня' : dd === 1 ? 'завтра' : dd === -1 ? 'вчера' : '';
+      const item = (o) => {
+        const s = status(o), l = late(o), sh = o.day && o.day > +o.due_date.slice(8), until = days(o.due_date, TODAY);
+        const sub = s === 'paid' ? `оплачено ${dm(o.paid_at)}${l ? ` · просрочка ${l}\u00a0дн.` : ''}` : s === 'overdue' ? `просрочка ${l}\u00a0дн.` : until === 0 ? 'срок сегодня' : until === 1 ? 'срок завтра' : `через ${until}\u00a0дн.`;
+        return `<div class="ri dri"><span class="cd">${SYM[o.currency]}</span><span class="nm">${esc(o.name)}<small><b class="am">${fmt(o.amount, o.currency)}</b> · ${sub}</small>${sh ? `<small class="shn">${ic('info')}по графику ${o.day}-е — в ${monthIn} ${dim} дней, срок в последний день месяца</small>` : ''}</span><span class="pill ${s}"><i></i>${ST[s]}</span></div>`;
+      };
+      const sums = CURS.filter((c) => os.some((o) => o.currency === c)).map((c) => `<span><em>${c}</em>${fmt(os.filter((o) => o.currency === c).reduce((a, o) => a + o.amount, 0), c)}</span>`).join('');
+      $('#day').innerHTML = `<div class="th dh"><div><span class="lbl">${WD[new Date(SEL + 'T00:00:00Z').getUTCDay()]}${rel ? ' · ' + rel : ''}</span><span class="h3">${longDate(SEL)}</span></div><div class="dnav"><button class="ibtn sm" type="button" data-dstep="-1" aria-label="Предыдущий день">${ic('back')}</button><button class="ibtn sm" type="button" data-dstep="1" aria-label="Следующий день">${ic('chev')}</button></div></div>
+        <div class="ulst">${os.length ? os.map(item).join('') : `<div class="dempty">${ic('cal')}<span>В этот день сроков оплаты нет</span></div>`}
+        ${rems.map((r) => { const ro = occ.find((o) => o.id === r.occurrence_id); return ro ? `<div class="drem">${ic('bell')}<span>Напоминание в Telegram: <b>${esc(ro.name)}</b> — срок ${dm(ro.due_date)}</span></div>` : ''; }).join('')}</div>
+        ${os.length ? `<div class="dsum">${sums}<small>срок ${dm(SEL)} · без конвертации</small></div>` : ''}`;
+    }
+
+    // прошлые месяцы
+    let SEQ = 0;
+    async function ondate() {
+      const my = ++SEQ, d = SEL;
+      let r; try { r = await BillPayApi.getSummaryOnDate(d); } catch (e) { toast(esc(e.message)); return; }
+      if (my !== SEQ) return;
+      const mi = +d.slice(5, 7) - 1, ml = MONTHS[mi].toLowerCase();
+      const pct = (a, t) => { const s = t.paid + t.to_pay + t.overdue; return s ? (a / s) * 100 : 0; };
+      const line = (cls, label, a, n, t, extra = '') => `<div class="ol ${cls} ${n ? '' : 'z'}"><i></i><span class="k">${label}${extra}</span><span class="c">${n}</span><b>${n ? fmt(a, t.currency) : '—'}</b></div>`;
+      const od = r.items.filter((o) => o.on_date.bucket === 'overdue').sort((a, b) => a.due_date.localeCompare(b.due_date) || a.id - b.id);
+      const note = d === TODAY ? '' : d > TODAY ? `<div class="onote">${ic('info')}<span>Дата в будущем: учтены только уже отмеченные оплаты. Неоплаченное со сроком раньше ${dmy(d)} показано как просроченное на эту дату, если его не оплатить.</span></div>`
+        : `<div class="onote">${ic('history')}<span>Прошедшая дата: оплаты с фактической датой позже ${dmy(d)} на этот день ещё не учитываются.</span></div>`;
+      $('#ondate').innerHTML = `<div class="th oh"><span class="h3">Итоги на дату</span>
+          <div class="otools">${d === TODAY ? '' : `<a class="more" href="${calUrl(TODAY)}">Сегодня</a>`}
+            <label class="dpick" title="Выбрать дату">${ic('cal')}<span class="dv">${dmy(d)}</span>${ic('down')}<input type="date" id="dateIn" value="${d}" aria-label="Дата для итогов"></label></div></div>
+        <p class="osub">На конец дня <b>${dmy(d)}</b>${d === TODAY ? ' (сегодня)' : ''}: оплачено и к оплате — периоды ${MONTHS_G[mi]} ${d.slice(0, 4)}, просрочено — все неоплаченные к этой дате периоды со сроком раньше, включая прошлые месяцы. Отдельно по каждой валюте, без конвертации.</p>
+        <div class="otots">${r.totals.map((t) => `<div class="otot ${t.count ? '' : 'zz'}">
+            <div class="oth"><span class="cd">${SYM[t.currency]}</span><b>${t.currency}</b><small>${pays(t.count)}</small></div>
+            <div class="obar" aria-hidden="true"><i class="paid" style="width:${pct(t.paid, t)}%"></i><i class="unpaid" style="width:${pct(t.to_pay, t)}%"></i><i class="overdue" style="width:${pct(t.overdue, t)}%"></i></div>
+            ${line('paid', 'Оплачено', t.paid, t.paid_count, t)}${line('unpaid', 'К оплате', t.to_pay, t.to_pay_count, t)}${line('overdue', 'Просрочено', t.overdue, t.overdue_count, t)}
+            ${t.overdue_earlier_count ? `<div class="oear">в т. ч. прошлые месяцы: ${fmt(t.overdue_earlier, t.currency)} · ${t.overdue_earlier_count}</div>` : ''}
+            <div class="ofoot"><span>Всего за ${ml}</span><b>${t.month_count ? fmt(t.month_total, t.currency) : '—'}</b></div>
+          </div>`).join('')}</div>
+        ${od.length ? `<div class="odl"><div class="lbl odl-h">Просрочено на ${dmy(d)} · ${pays(od.length)}</div>${od.map((o) => `<div class="ri"><span class="d">${dm(o.due_date)}</span><span class="nm">${esc(o.name)}${o.month !== d.slice(0, 7) ? `<em class="mtag">${mLabel(o.month, d)}</em>` : ''}<small>${fmt(o.amount, o.currency)} · просрочка ${o.on_date.overdue_days}\u00a0дн.${o.paid_at ? ` · оплачено ${dm(o.paid_at)}` : ''}</small></span><span class="pill overdue"><i></i>${ST.overdue}</span></div>`).join('')}</div>` : ''}
+        ${note}
+        <div class="ohelp"><div><b><i class="paid"></i>Оплачено</b><span>периоды месяца даты с фактической датой оплаты не позже неё</span></div><div><b><i class="unpaid"></i>К оплате</b><span>периоды месяца даты со сроком в эту дату или позже, не оплаченные к ней</span></div><div><b><i class="overdue"></i>Просрочено</b><span>все периоды со сроком раньше даты, не оплаченные к ней, включая прошлые месяцы — со следующего дня после срока</span></div></div>`;
+    }
+
+    const select = (d) => {
+      SEL = d; grid(); day(); ondate();
+      const p = new URLSearchParams(location.search); if (d !== TODAY) p.set('date', d); else p.delete('date');
+      const s = p.toString(); history.replaceState(null, '', location.pathname + (s ? '?' + s : ''));
+    };
+    $('#month').addEventListener('click', (e) => { const c = e.target.closest('[data-day]'); if (!c) return; select(c.dataset.day); const n = $(`[data-day="${SEL}"]`); if (n) n.focus({ preventScroll: true }); if (innerWidth <= 900) $('#day').scrollIntoView({ behavior: RM ? 'auto' : 'smooth', block: 'nearest' }); });
+    $('#month').addEventListener('keydown', (e) => {
+      const c = e.target.closest('[data-day]'); if (!c) return;
+      const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key];
+      if (step) { e.preventDefault(); go(addD(SEL, step)); const n = $(`[data-day="${SEL}"]`); if (n) n.focus(); }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(c.dataset.day); const n = $(`[data-day="${SEL}"]`); if (n) n.focus(); }
+    });
+    $('#day').addEventListener('click', (e) => { const b = e.target.closest('[data-dstep]'); if (b) go(addD(SEL, +b.dataset.dstep)); });
+    $('#ondate').addEventListener('click', (e) => { const dp = e.target.closest('.dpick'); if (dp && e.target.tagName !== 'INPUT') { try { $('input', dp).showPicker(); } catch (x) {} } });
+    $('#ondate').addEventListener('change', (e) => { if (e.target.id === 'dateIn' && isDate(e.target.value)) go(e.target.value); });
+
+    select(SEL);
     const upcoming = occ.filter((o) => !o.paid_at).sort((a, b) => a.due_date.localeCompare(b.due_date));
     $('#upcoming').innerHTML = `<div class="th"><span class="h3">Ближайшие и просроченные</span></div><div class="ulst">${upcoming.length ? '' : occ.length ? emptyCta('check', 'Всё оплачено', `В ${monthIn} неоплаченных платежей нет.`) : S.currentUser.role === 'admin' ? emptyCta('cal', 'Платежей пока нет', 'Добавьте первый регулярный платёж — сроки появятся в календаре.', `<a class="btn" href="/app/admin#new">${ic('plus')}Добавить платёж</a>`) : emptyCta('cal', 'Платежей пока нет', 'Сроки появятся здесь, когда администратор добавит платежи.')}${upcoming.map((o) => { const s = status(o), l = late(o); return `<div class="ri"><span class="d">${dm(o.due_date)}</span><span class="nm">${esc(o.name)}<small>${fmt(o.amount, o.currency)}${l ? ` · просрочка ${l}\u00a0дн.` : ''}</small></span><span class="pill ${s}"><i></i>${ST[s]}</span></div>`; }).join('')}</div>`;
     $('#cal-tg').innerHTML = reminderCard(meta, occ);

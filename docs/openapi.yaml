@@ -194,17 +194,28 @@ paths:
   /payments/summary:
     get:
       tags: [payments]
-      summary: Итоги за месяц отдельно по каждой валюте, без конвертации
-      description: Принимает те же фильтры, что и список периодов — итоги считаются по отфильтрованным периодам.
+      summary: Итоги за месяц или на дату — отдельно по каждой валюте, без конвертации
+      description: |
+        За месяц (`month`) — те же фильтры, что у списка.
+        На дату (`date`) — конец дня: оплачено и к оплате из месяца даты, просрочка включает прошлые месяцы.
+        `date` не вместе с `month` и фильтрами, не дальше 12 месяцев.
       parameters:
         - { $ref: '#/components/parameters/Month' }
+        - { name: date, in: query, required: false, schema: { type: string, format: date, example: '2026-10-24' }, description: Итоги на дату (конец дня) }
+        - { name: include, in: query, required: false, schema: { type: string, enum: [items] }, description: 'Только с date: вернуть объект SummaryOnDate с периодами' }
         - { $ref: '#/components/parameters/Q' }
         - { $ref: '#/components/parameters/StatusFilter' }
         - { $ref: '#/components/parameters/CurrencyList' }
       responses:
         '200':
-          description: OK
-          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Summary' } } } }
+          description: 'Массив Summary (month) или SummaryAtDate (date); с include=items — SummaryOnDate'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { type: array, items: { $ref: '#/components/schemas/Summary' } }
+                  - { type: array, items: { $ref: '#/components/schemas/SummaryAtDate' } }
+                  - { $ref: '#/components/schemas/SummaryOnDate' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
   /users:
@@ -343,6 +354,7 @@ components:
         amount: { type: number }
         currency: { $ref: '#/components/schemas/Currency' }
         due_date: { type: string, format: date }
+        day: { type: integer, description: 'Число месяца по графику; если его нет в месяце — срок в последний день месяца' }
         paid_at: { type: string, format: date, nullable: true }
         is_paid: { type: boolean }
         status: { type: string, enum: [paid, unpaid, overdue], description: 'overdue: со следующего дня после due_date' }
@@ -378,6 +390,44 @@ components:
             paid: { type: integer }
         totals: { type: array, description: 'Итоги по отфильтрованным периодам, отдельно по валютам, без конвертации', items: { $ref: '#/components/schemas/Summary' } }
         items: { type: array, items: { $ref: '#/components/schemas/Occurrence' } }
+    SummaryAtDate:
+      type: object
+      description: Итоги по одной валюте на дату (конец дня), без конвертации
+      properties:
+        currency: { $ref: '#/components/schemas/Currency' }
+        as_of: { type: string, format: date }
+        paid: { type: number, description: Периоды месяца даты с paid_at ≤ даты }
+        paid_count: { type: integer }
+        to_pay: { type: number, description: 'Периоды месяца даты со сроком ≥ даты, не оплаченные к ней' }
+        to_pay_count: { type: integer }
+        overdue: { type: number, description: 'Все периоды со сроком < даты, не оплаченные к ней, включая прошлые месяцы' }
+        overdue_count: { type: integer }
+        overdue_earlier: { type: number, description: Часть overdue из прошлых месяцев }
+        overdue_earlier_count: { type: integer }
+        total: { type: number, description: paid + to_pay + overdue }
+        count: { type: integer }
+        month_total: { type: number, description: Сумма всех периодов месяца даты }
+        month_count: { type: integer }
+    SummaryOnDate:
+      type: object
+      properties:
+        as_of: { type: string, format: date }
+        month: { type: string, example: '2026-10' }
+        totals: { type: array, items: { $ref: '#/components/schemas/SummaryAtDate' } }
+        items:
+          type: array
+          description: Периоды, вошедшие в итоги; прошлые месяцы — только просроченные на дату
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/Occurrence' }
+              - type: object
+                properties:
+                  on_date:
+                    type: object
+                    properties:
+                      bucket: { type: string, enum: [paid, to_pay, overdue] }
+                      status: { type: string, enum: [paid, unpaid, overdue], description: Статус на дату }
+                      overdue_days: { type: integer, description: Дней просрочки на дату }
     Meta:
       type: object
       properties:

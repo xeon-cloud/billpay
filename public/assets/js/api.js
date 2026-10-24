@@ -33,7 +33,6 @@
     me: () => request('/auth/me'),
 
     getOccurrences: (month = MONTH()) => request('/payment-occurrences?month=' + month),
-    // поиск, фильтры и сортировка на сервере; ответ — периоды + счётчики статусов + итоги по валютам
     listOccurrences: (params = {}, month = MONTH()) => {
       const q = new URLSearchParams({ month, include: 'meta' });
       Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== '') q.set(k, v); });
@@ -41,6 +40,8 @@
     },
     setPaid: (id, paidAt) => request('/payment-occurrences/' + id, { method: 'PATCH', body: { is_paid: !!paidAt, paid_at: paidAt || null } }),
     getSummary: (month = MONTH()) => request('/payments/summary?month=' + month),
+    // прошлые месяцы
+    getSummaryOnDate: (date) => request('/payments/summary?include=items&date=' + date),
 
     getRecurringPayments: () => request('/recurring-payments'),
     updateRecurringPayment: (id, body) => request('/recurring-payments/' + id, { method: 'PATCH', body }),
