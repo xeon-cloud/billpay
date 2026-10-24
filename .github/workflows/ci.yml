@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Тесты (Node 20 + PostgreSQL 16)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: billpay
+          POSTGRES_PASSWORD: ci-test-password
+          POSTGRES_DB: billpay_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U billpay -d billpay_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://billpay:ci-test-password@localhost:5432/billpay_test
+      DATABASE_URL: postgres://billpay:ci-test-password@localhost:5432/billpay_test
+      TZ: Europe/Moscow
+      APP_TIMEZONE: Europe/Moscow
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Установка зависимостей
+        run: npm ci --no-fund
+
+      - name: Аудит зависимостей
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Проверка OpenAPI-спецификации
+        run: npx --yes @apidevtools/swagger-cli@4 validate docs/openapi.yaml
+
+      - name: Тесты
+        run: npm test
+
+  docker:
+    name: Docker-образ и запуск compose
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Сборка образа
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: billpay-app:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: .env для проверки (случайные секреты)
+        run: |
+          PG_PASS="$(openssl rand -hex 24)"
+          sed -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${PG_PASS}|" \
+              -e "s|^DATABASE_URL=.*|DATABASE_URL=postgres://billpay:${PG_PASS}@localhost:5432/billpay|" \
+              -e "s|^SESSION_SECRET=.*|SESSION_SECRET=$(openssl rand -hex 32)|" \
+              -e "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD=$(openssl rand -hex 16)|" \
+              -e "s|^PORT=.*|PORT=3000|" \
+              -e "s|^APP_BIND=.*|APP_BIND=127.0.0.1|" \
+              .env.example > .env
+          if grep -qi 'change-me' .env; then echo "в .env остались значения change-me"; exit 1; fi
+
+      - name: docker compose config
+        run: docker compose config -q
+
+      - name: Запуск app, db и bot
+        run: |
+          docker compose up -d --no-build --wait --wait-timeout 120 db app
+          docker compose up -d --no-build bot
+
+      - name: Проверка /healthz
+        run: |
+          for _ in $(seq 1 30); do
+            code="$(curl -s -o /tmp/healthz.json -w '%{http_code}' http://127.0.0.1:3000/healthz || true)"
+            if [ "$code" = "200" ]; then cat /tmp/healthz.json; echo; exit 0; fi
+            sleep 2
+          done
+          echo "healthz не ответил 200 (последний код: ${code})"
+          exit 1
+
+      - name: Состояние контейнеров
+        run: |
+          sleep 5
+          docker compose ps
+          test "$(docker compose ps --status running --services | sort | tr '\n' ' ')" = "app bot db "
+
+      - name: Логи при ошибке
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+
+      - name: Остановка
+        if: always()
+        run: docker compose down -v
