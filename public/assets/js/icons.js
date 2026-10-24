@@ -34,6 +34,7 @@ window.BillPayIcons = {
   filter:'<path d="M4 6.5h16M7 12h10M10 17.5h4"/>',
   sort:'<path d="M7 4.5v15M4 16.5l3 3 3-3M17 19.5v-15M14 7.5l3-3 3 3"/>',
   up:'<path d="M12 18.5v-13M7 10.5l5-5 5 5"/>',
-  dn:'<path d="M12 5.5v13M7 13.5l5 5 5-5"/>'
+  dn:'<path d="M12 5.5v13M7 13.5l5 5 5-5"/>',
+  mail:'<rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/><path d="m4.5 7.5 7.5 5.6 7.5-5.6"/>'
 };
 window.ic = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${window.BillPayIcons[n] || ''}</svg>`;

@@ -2,6 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const config = require('../config');
 const D = require('../dates');
+const { parseEmail } = require('../mailer');
 
 module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
   const r = express.Router();
@@ -9,8 +10,11 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
   const bad = (res, detail, code = 400) => res.status(code).json({ detail });
   const monthParam = (req) => (req.query.month === undefined ? D.today().slice(0, 7) : req.query.month);
   const idParam = (req) => (/^\d+$/.test(req.params.id) ? +req.params.id : NaN);
+  const RET = 'id, login, name, role, is_env_admin, created_at, email';
+  const EMAIL_ERR = 'email: адрес вида name@company.ru или null';
+  const EMAIL_TAKEN = 'Эта почта уже указана у другого пользователя';
+  const emailTaken = (e) => e.code === '23505' && e.constraint === 'users_email_uq';
 
-  // JSONB не хранит порядок ключей
   const orderBudgets = (b) => Object.fromEntries(Object.entries(b || {}).sort(([x], [y]) => payments.CURRENCIES.indexOf(x) - payments.CURRENCIES.indexOf(y)));
 
   r.get('/health', async (_req, res) => {
@@ -28,13 +32,28 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
   });
   r.post('/auth/logout', (_req, res) => { auth.clearCookie(res); res.status(204).end(); });
   r.get('/auth/me', requireAuth, (req, res) => res.json(req.user));
+  r.patch('/auth/me', requireAuth, async (req, res) => {
+    const b = req.body || {};
+    if (Object.keys(b).some((k) => k !== 'email')) return bad(res, 'Можно менять только email', 403);
+    if (!('email' in b)) return bad(res, 'Передайте email (адрес или null)', 422);
+    const e = parseEmail(b.email);
+    if (e.error) return bad(res, EMAIL_ERR, 422);
+    try {
+      const { rows: [u] } = await pool.query(`UPDATE users SET email = $2 WHERE id = $1 RETURNING ${RET}`, [req.user.id, e.value]);
+      if (!u) return bad(res, 'Пользователь не найден', 404);
+      res.json(auth.publicUser(u));
+    } catch (x) {
+      if (emailTaken(x)) return bad(res, EMAIL_TAKEN, 409);
+      throw x;
+    }
+  });
 
   r.get('/meta', requireAuth, async (req, res) => {
     const month = monthParam(req);
     if (!D.isMonth(month)) return bad(res, 'month: формат YYYY-MM');
     res.json({
       today: D.today(), month, timezone: config.timezone, telegramChat: config.telegramChat,
-      remindDaysBefore: config.remindDaysBefore, currentUser: req.user,
+      remindDaysBefore: config.remindDaysBefore, currentUser: req.user, email: { enabled: config.emailEnabled },
       budgets: orderBudgets(await payments.getSetting('budgets')), reminders: await payments.reminders(month)
     });
   });
@@ -101,7 +120,6 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
     const f = listFilter(req, res); if (!f) return;
     const { include } = req.query;
     if (include !== undefined && include !== 'meta') return bad(res, 'include: meta');
-    // со счётчиками
     res.json(include === 'meta' ? await payments.occurrencePage(month, f) : await payments.occurrences(month, f));
   });
 
@@ -149,26 +167,28 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
   r.get('/users', requireAdmin, async (_req, res) => res.json(await auth.allUsers()));
 
   r.post('/users', requireAdmin, async (req, res) => {
-    const { login, password, name, role } = req.body || {};
-    // не из панели
+    const { login, password, name, role, email } = req.body || {};
     if (role !== undefined && role !== 'user') return bad(res, 'Администратора нельзя добавить через панель: он задаётся в .env', 403);
     const err = [];
     if (typeof login !== 'string' || !LOGIN.test(login)) err.push('login: 3–32 символа (латиница, цифры, . _ -)');
     if (typeof password !== 'string' || password.length < 6) err.push('password: минимум 6 символов');
     if (typeof name !== 'string' || !name.trim()) err.push('name: обязательно');
+    const e = email === undefined ? { value: null } : parseEmail(email);
+    if (e.error) err.push(EMAIL_ERR);
     if (err.length) return bad(res, err.join('; '), 422);
     const l = login.toLowerCase();
     if (l === config.admin.login) return bad(res, 'Логин уже занят', 409);
     try {
       const { rows: [u] } = await pool.query(
-        `INSERT INTO users (login, name, role, password_hash, created_at) VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, login, name, role, is_env_admin, created_at`,
-        [l, name.trim(), 'user', await bcrypt.hash(password, 10), D.today()]
+        `INSERT INTO users (login, name, role, password_hash, created_at, email) VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING ${RET}`,
+        [l, name.trim(), 'user', await bcrypt.hash(password, 10), D.today(), e.value]
       );
       res.status(201).json(auth.publicUser(u));
-    } catch (e) {
-      if (e.code === '23505') return bad(res, 'Логин уже занят', 409);
-      throw e;
+    } catch (x) {
+      if (emailTaken(x)) return bad(res, EMAIL_TAKEN, 409);
+      if (x.code === '23505') return bad(res, 'Логин уже занят', 409);
+      throw x;
     }
   });
 
@@ -177,17 +197,25 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
     if (id === auth.ENV_ADMIN_ID) return protectedAdmin(res);
     const u = Number.isSafeInteger(id) ? await auth.findById(id) : null;
     if (!u) return bad(res, 'Пользователь не найден', 404);
-    const { name, role, password } = req.body || {};
+    const { name, role, password, email } = req.body || {};
     if (role !== undefined) return bad(res, 'Роль изменить нельзя: администратор задаётся в .env', 403);
     if (name !== undefined && (typeof name !== 'string' || !name.trim())) return bad(res, 'name: не может быть пустым', 422);
     if (password !== undefined && (typeof password !== 'string' || password.length < 6)) return bad(res, 'password: минимум 6 символов', 422);
-    const { rows: [updated] } = await pool.query(
-      `UPDATE users SET name = COALESCE($2, name), password_hash = COALESCE($3, password_hash)
-        WHERE id = $1 AND NOT is_env_admin RETURNING id, login, name, role, is_env_admin, created_at`,
-      [id, name !== undefined ? name.trim() : null, password !== undefined ? await bcrypt.hash(password, 10) : null]
-    );
-    if (!updated) return bad(res, 'Пользователь не найден', 404);
-    res.json(auth.publicUser(updated));
+    const e = email === undefined ? null : parseEmail(email);
+    if (e && e.error) return bad(res, EMAIL_ERR, 422);
+    try {
+      const { rows: [updated] } = await pool.query(
+        `UPDATE users SET name = COALESCE($2, name), password_hash = COALESCE($3, password_hash),
+                email = CASE WHEN $4 THEN $5 ELSE email END
+          WHERE id = $1 AND NOT is_env_admin RETURNING ${RET}`,
+        [id, name !== undefined ? name.trim() : null, password !== undefined ? await bcrypt.hash(password, 10) : null, !!e, e ? e.value : null]
+      );
+      if (!updated) return bad(res, 'Пользователь не найден', 404);
+      res.json(auth.publicUser(updated));
+    } catch (x) {
+      if (emailTaken(x)) return bad(res, EMAIL_TAKEN, 409);
+      throw x;
+    }
   });
 
   r.delete('/users/:id', requireAdmin, async (req, res) => {

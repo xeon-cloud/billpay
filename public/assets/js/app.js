@@ -27,6 +27,9 @@
   const emptyCta = (icon, title, text, action = '') => `<div class="ecta rise"><span class="ec-ic">${ic(icon)}</span><b>${title}</b><p>${text}</p>${action ? `<div class="ec-a">${action}</div>` : ''}</div>`;
   const CHK = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.4l2.8 2.8 6-6.2"/></svg>';
   const TT = (cls = '') => `<button class="ibtn tt ${cls}" data-theme-toggle aria-label="Сменить тему">${ic('moon', 'moon')}${ic('sun', 'sun')}</button>`;
+  const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/;
+  const mailOn = () => !!(S.email && S.email.enabled && S.currentUser.email);
+  const remWhere = () => `чат «${esc(S.telegramChat)}»${mailOn() ? ' и почта' : ''}`;
   const LOGO = '<img src="/assets/img/logo-128.png" width="28" height="28" alt=""><span class="wm">billpay</span>';
 
   const NAV = [['payments', '/app', 'card', 'Платежи'], ['calendar', '/app/calendar', 'cal', 'Календарь'], ['users', '/app/admin', 'users', 'Пользователи'], ['settings', '/app/admin#settings', 'sliders', 'Настройки']];
@@ -39,14 +42,44 @@
       <nav class="nv">${nav.map(([k, h, i, l]) => `<a class="ni ${k === active ? 'on' : ''}" href="${h}" title="${l}">${ic(i)}<span class="tx">${l}</span></a>`).join('')}</nav>
       <div class="lbl sl">Валюты</div>
       <div class="nv" style="margin-top:0">${['RUB', 'USD', 'EUR'].map((c) => `<a class="ni cur-l" href="/app#${c}"><span class="cd">${SYM[c]}</span><span class="tx">${c}</span><span class="c" data-count="${c}"></span></a>`).join('')}</div>
-      <div class="bot"><div class="h">${ic('send')}Напоминания</div><p>За ${S.remindDaysBefore} дня до срока · чат «${esc(S.telegramChat)}»</p></div>
-      <div class="me"><div class="ava">${initials(u.name)}</div><div class="who"><b>${esc(u.name)}</b><small>${isAdmin ? 'Администратор' : 'Пользователь'}</small></div><button class="ibtn sm" data-logout aria-label="Выйти" title="Выйти">${ic('logout')}</button></div>`;
+      <div class="bot"><div class="h">${ic('send')}Напоминания</div><p data-remwhere>За ${S.remindDaysBefore} дня до срока · ${remWhere()}</p></div>
+      <div class="me"><div class="ava">${initials(u.name)}</div><div class="who"><b>${esc(u.name)}</b><small>${isAdmin ? 'Администратор' : 'Пользователь'}</small></div><button class="ibtn sm" data-profile aria-label="Почта для оповещений" title="Почта для оповещений">${ic('mail')}</button><button class="ibtn sm" data-logout aria-label="Выйти" title="Выйти">${ic('logout')}</button></div>`;
     const top = $('#top');
     if (top) top.innerHTML = `<a class="logo" href="/app" aria-label="BillPay">${LOGO}</a><div class="crumb lbl">${crumb}</div>
-      <div class="tb">${actions}<button class="ibtn mo" data-cmdk aria-label="Поиск">${ic('search')}</button>${TT()}${mobileActions}<button class="ibtn mo" data-logout aria-label="Выйти">${ic('logout')}</button></div>`;
+      <div class="tb">${actions}<button class="ibtn mo" data-cmdk aria-label="Поиск">${ic('search')}</button>${TT()}${mobileActions}<button class="ibtn mo" data-profile aria-label="Почта для оповещений">${ic('mail')}</button><button class="ibtn mo" data-logout aria-label="Выйти">${ic('logout')}</button></div>`;
     document.body.insertAdjacentHTML('beforeend', `<nav class="tabbar" aria-label="Разделы">${nav.map(([k, h, i, l]) => `<a class="tab ${k === active ? 'on' : ''}" href="${h}">${ic(i)}<span>${l}</span></a>`).join('')}</nav>
       <div class="ov" id="ov"><div class="pal" role="dialog" aria-label="Командная палитра"><div class="pin">${ic('search')}<input id="q" placeholder="Команда или название платежа" autocomplete="off"><span class="kbd">esc</span></div><div id="opts"></div><div class="pf"><span>↑↓ выбрать</span><span>↵ выполнить</span><span>esc закрыть</span></div></div></div>
-      <div class="toasts" id="toasts" aria-live="polite"></div>`);
+      <div class="toasts" id="toasts" aria-live="polite"></div>
+      <div class="sheet-ov" id="prof" aria-hidden="true"><form class="sheet pfs" role="dialog" aria-label="Почта для оповещений" novalidate></form></div>`);
+    profile();
+  }
+
+  let openProfile = () => {};
+  function profile() {
+    const ov = $('#prof'), f = $('form', ov);
+    const draw = (err = '') => {
+      const u = S.currentUser, has = !!u.email;
+      f.innerHTML = `<div class="grab"></div><div class="sh-h"><b>Почта для оповещений</b><button class="ibtn sm" type="button" data-pclose aria-label="Закрыть">${ic('x')}</button></div>
+        <div class="sh-b"><div class="pf-who"><span class="ava">${initials(u.name)}</span><span><b>${esc(u.name)}</b><small>${u.from_env ? 'главный админ' : '@' + esc(u.login)}</small></span></div>
+          <div class="f"><label for="pEmail">Почта <span class="optl">необязательно</span></label><input class="inp" id="pEmail" name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="none" spellcheck="false" placeholder="name@company.ru" value="${esc(u.email || '')}" aria-invalid="${!!err}" aria-describedby="pEmailNote">
+          <span class="fnote ${err ? 'err' : ''}" id="pEmailNote">${err ? esc(err) : `Напоминания о неоплаченных платежах — за ${S.remindDaysBefore} дня до срока, как в Telegram. Пусто — писем не будет.`}</span></div>
+          ${S.email && S.email.enabled ? '' : `<div class="hint">${ic('info')}<span>Отправка писем сейчас выключена: SMTP не настроен в .env. Адрес сохранится и начнёт работать после настройки.</span></div>`}</div>
+        <div class="sh-f pfs-f">${has ? '<button class="btn ghost lg" type="button" data-premove>Убрать почту</button>' : ''}<button class="btn lg" type="submit">Сохранить</button></div>`;
+    };
+    const open = () => { draw(); ov.classList.add('on'); ov.setAttribute('aria-hidden', 'false'); setTimeout(() => $('#pEmail').focus({ preventScroll: true }), 250); };
+    const close = () => { ov.classList.remove('on'); ov.setAttribute('aria-hidden', 'true'); };
+    const save = async (email) => {
+      if (email && !EMAIL_RE.test(email)) { draw('Проверьте адрес: нужен вид name@company.ru'); $('#pEmail').value = email; $('#pEmail').focus(); return; }
+      try { S.currentUser = await BillPayApi.updateMe({ email: email || null }); } catch (x) { draw(x.message); $('#pEmail').value = email; return; }
+      close(); $$('[data-remwhere]').forEach((n) => (n.innerHTML = `За ${S.remindDaysBefore} дня до срока · ${remWhere()}`));
+      $$('[data-remsub]').forEach((n) => (n.innerHTML = remSub(S)));
+      document.dispatchEvent(new CustomEvent('billpay:me'));
+      toast(email ? `Почта сохранена<small>${esc(email.toLowerCase())}</small>` : 'Почта убрана<small>письма больше не придут</small>');
+    };
+    document.addEventListener('click', (e) => { if (e.target.closest('[data-profile]')) open(); if (e.target.closest('[data-pclose]') || e.target === ov) close(); if (e.target.closest('[data-premove]')) save(''); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ov.classList.contains('on')) close(); });
+    f.addEventListener('submit', (e) => { e.preventDefault(); save($('#pEmail').value.trim()); });
+    openProfile = open;
   }
 
   function setTheme(next, x = innerWidth - 40, y = 32) {
@@ -88,6 +121,7 @@
       { t: 'Перейти: Платежи', m: 'список', ic: 'card', run: () => (location.href = '/app') },
       { t: 'Перейти: Календарь', m: 'месяц', ic: 'cal', run: () => (location.href = '/app/calendar') },
       ...(isAdmin ? [{ t: 'Новый регулярный платёж', m: 'админ', ic: 'plus', run: () => (location.href = '/app/admin#new') }, { t: 'Перейти: Пользователи', m: 'админ', ic: 'users', run: () => (location.href = '/app/admin') }] : []),
+      { t: 'Почта для оповещений', m: 'профиль', ic: 'mail', run: () => openProfile() },
       { t: 'Сменить тему', m: 'тёмная / светлая', ic: 'moon', run: () => toggleTheme() },
       { t: 'Открыть лендинг', m: 'о продукте', ic: 'home', run: () => (location.href = '/') },
       { t: 'Выйти', m: S.currentUser.login, ic: 'logout', run: () => logout() }];
@@ -116,11 +150,12 @@
     document.addEventListener('click', (e) => { if (e.target.closest('[data-cmdk]')) open(); });
   }
 
+  const remSub = (m) => `за ${m.remindDaysBefore} дня до срока · «${esc(m.telegramChat)}»${mailOn() ? ' · копия на почту' : ''}`;
   const reminderRows = (meta, occ, limit = 3) => meta.reminders.filter((r) => occ.some((x) => x.id === r.occurrence_id)).slice(0, limit).map((r) => {
     const o = occ.find((x) => x.id === r.occurrence_id); if (!o) return '';
     return `<div class="ri"><span class="d">${dm(r.send_date)}</span><span class="nm">${esc(o.name)}<small>${num(o.amount, o.currency)} ${o.currency} · до ${dm(o.due_date)}</small></span><span class="s ${r.status === 'sent' ? 'ok' : ''}">${r.status === 'sent' ? ic('check') + '<span class="st">наступило</span>' : ic('clock') + '<span class="st">' + r.time + '</span>'}</span></div>`;
   }).join('');
-  const reminderCard = (meta, occ) => `<div class="tgh"><span class="bi">${ic('bell')}</span><div><b>Напоминания в Telegram</b><small>за ${meta.remindDaysBefore} дня до срока · «${esc(meta.telegramChat)}»</small></div></div><div class="rl">${reminderRows(meta, occ) || `<div class="rl-e">${ic('bell')}<span>Ближайших напоминаний нет. Они появятся, когда в месяце будут неоплаченные платежи.</span></div>`}</div>`;
+  const reminderCard = (meta, occ) => `<div class="tgh"><span class="bi">${ic('bell')}</span><div><b>Напоминания в Telegram</b><small data-remsub>${remSub(meta)}</small></div></div><div class="rl">${reminderRows(meta, occ) || `<div class="rl-e">${ic('bell')}<span>Ближайших напоминаний нет. Они появятся, когда в месяце будут неоплаченные платежи.</span></div>`}</div>`;
   const sideCounts = (occ) => ['RUB', 'USD', 'EUR'].forEach((c) => $$(`[data-count="${c}"]`).forEach((n) => (n.textContent = occ.filter((o) => o.currency === c).length)));
   const todayChip = () => `${ic('cal')}сегодня ${dmy(TODAY)}`;
 
@@ -132,7 +167,6 @@
     palette();
     $$('#history [data-ic], #sheet [data-ic]').forEach((e) => (e.outerHTML = ic(e.dataset.ic)));
 
-    // в адресе
     const CURS = ['RUB', 'USD', 'EUR'];
     const SORTS = { name: 'Название', amount: 'Сумма', due_date: 'Срок', status: 'Статус', paid_at: 'Факт. дата', overdue_days: 'Просрочка' };
     const DEF = { sort: 'due_date', order: 'asc' };
@@ -197,7 +231,6 @@
       while ((j = lo.indexOf(ql, i)) !== -1) { out += esc(text.slice(i, j)) + '<mark>' + esc(text.slice(j, j + q.length)) + '</mark>'; i = j + q.length; }
       return out + esc(text.slice(i));
     };
-    // своя дата
     let PICK = null, EDIT = null;
     const editing = (o) => PICK === o.id || EDIT === o.id;
     const fact = (o) => {
@@ -244,7 +277,6 @@
       } else if (!list.length) {
         $('#rows').innerHTML = emptyCta('search', 'Ничего не найдено', `${qv() ? `По запросу «${esc(qv())}»` : 'По выбранным фильтрам'} в ${monthIn} ${year} нет платежей. Измените запрос или сбросьте фильтры.`, `<button class="btn" type="button" data-reset>${ic('undo')}Сбросить фильтры</button>`);
       } else if (F.sort === 'amount') {
-        // группы валют
         let i = 0;
         $('#rows').innerHTML = PAGE.totals.filter((t) => t.count).map((t) => `<div class="grp"><span class="cd">${SYM[t.currency]}</span><b>${t.currency}</b><span>${t.count} ${plural(t.count, 'платёж', 'платежа', 'платежей')} · ${fmt(t.total, t.currency)}</span></div>` + list.filter((o) => o.currency === t.currency).map((o) => row(o, i++, mode)).join('')).join('');
       } else {
@@ -252,7 +284,6 @@
       }
     };
     const render = (mode) => { controls(); rows(mode); };
-    // тихая перерисовка
     async function load(mode = 'filter', quiet = false) {
       const my = ++SEQ;
       let p; try { p = await BillPayApi.listOccurrences(params()); } catch (e) { toast(esc(e.message)); return; }
@@ -282,7 +313,6 @@
     };
     const paint = (o) => { const r = $('#r-' + o.id); if (!r) return; r.classList.remove('rise'); r.innerHTML = inner(o); $$('.pill,.fd,.lt,.ac', r).forEach((e) => e.classList.add('swap')); };
     const focusDate = (id) => { const inp = $(`[data-date="${id}"]`); if (inp) { inp.focus(); inp.closest('.rw').scrollIntoView({ block: 'nearest', behavior: RM ? 'auto' : 'smooth' }); } };
-    // сброс фильтра
     async function reveal(id) {
       if ($('#r-' + id)) return;
       Object.assign(F, { q: '', status: 'all', sort: DEF.sort, order: DEF.order }); F.cur.clear();
@@ -297,7 +327,6 @@
       const o = find(id); if (!o || !o.paid_at) return;
       EDIT = id; PICK = null; paint(o); focusDate(id);
     }
-    // ручная запись
     async function commitDate(id, date) {
       const o = find(id); if (!o) return;
       if (!date) return toast('Укажите фактическую дату');
@@ -354,7 +383,6 @@
       const t = e.target;
       const dd = t.closest('[data-dd]');
       if (dd) { const box = dd.parentElement, was = box.classList.contains('open'); closeDd(); box.classList.toggle('open', !was); dd.setAttribute('aria-expanded', !was); return; }
-      // путь клика
       if (!e.composedPath().some((n) => n.classList && n.classList.contains('pop'))) closeDd();
       if (t.closest('[data-sheet]')) { openSheet(); return; }
       if (t.closest('[data-close-sheet]') || t === sh) { closeSheet(); return; }
@@ -399,7 +427,6 @@
     const mLabel = (m, ref) => MONTHS[+m.slice(5, 7) - 1].toLowerCase() + (m.slice(0, 4) !== ref.slice(0, 4) ? ' ' + m.slice(0, 4) : '');
     const y = +year, m = +VM.slice(5, 7), first = (new Date(y, m - 1, 1).getDay() + 6) % 7, dim = new Date(y, m, 0).getDate(), prev = new Date(y, m - 1, 0).getDate();
 
-    // день в адресе
     const qd = new URLSearchParams(location.search).get('date');
     let SEL = isDate(qd) && qd.slice(0, 7) === VM ? qd : IS_CUR ? TODAY : `${VM}-01`;
     const calUrl = (d) => { const p = new URLSearchParams(); if (d.slice(0, 7) !== CUR) p.set('month', d.slice(0, 7)); if (d !== TODAY) p.set('date', d); const s = p.toString(); return '/app/calendar' + (s ? '?' + s : ''); };
@@ -436,7 +463,6 @@
         ${os.length ? `<div class="dsum">${sums}<small>срок ${dm(SEL)} · без конвертации</small></div>` : ''}`;
     }
 
-    // прошлые месяцы
     let SEQ = 0;
     async function ondate() {
       const my = ++SEQ, d = SEL;
@@ -493,19 +519,24 @@
     const [meta, occ] = await Promise.all([BillPayApi.getMeta(), BillPayApi.getOccurrences()]); sideCounts(occ);
     const ME = S.currentUser;
     const uf = $('#userForm'), U = (n) => $(`[name=${n}]`, uf); let EDIT = null, USERS = [], SILENT = false;
+    const EMAIL_NOTE = $('#uEmailHint').textContent;
+    const emailNote = (err = '') => { const n = $('#uEmailHint'); n.textContent = err || EMAIL_NOTE; n.classList.toggle('err', !!err); U('email').setAttribute('aria-invalid', !!err); };
+    uf.addEventListener('input', (e) => { if (e.target === U('email') && U('email').getAttribute('aria-invalid') === 'true') emailNote(); });
     const draw = async () => {
       const users = USERS = await BillPayApi.getUsers();
       $('#ucount').textContent = users.length;
-      $('#users').innerHTML = users.map((u, i) => `<div class="ug ur rise" style="--d:${i * 30}ms"><span class="un2"><span class="ava ${u.from_env ? '' : 'n'}">${initials(u.name)}</span><span class="t"><b>${esc(u.name)}</b><small>${u.from_env ? 'главный админ' : '@' + esc(u.login)}</small></span></span><span class="rc"><span class="role ${u.role}">${u.role === 'admin' ? 'Администратор' : 'Пользователь'}</span></span><span class="dc ul2" style="display:block">${dmy(u.created_at)}</span><span class="ia">${u.from_env ? `<span class="lock">${ic('lock')}Защищён</span>` : `<button class="ibtn sm" data-edit="${u.id}" aria-label="Изменить" title="Изменить">${ic('edit')}</button>${u.id === ME.id ? '' : `<button class="ibtn sm del" data-del="${u.id}" aria-label="Удалить" title="Удалить">${ic('trash')}</button>`}`}</span></div>`).join('')
+      $('#users').innerHTML = users.map((u, i) => `<div class="ug ur rise" style="--d:${i * 30}ms"><span class="un2"><span class="ava ${u.from_env ? '' : 'n'}">${initials(u.name)}</span><span class="t"><b>${esc(u.name)}</b><small>${u.from_env ? 'главный админ' : '@' + esc(u.login)}</small></span></span><span class="ec ul2 ${u.email ? '' : 'none'}" title="${esc(u.email || '')}">${u.email ? ic('mail') + '<span>' + esc(u.email) + '</span>' : 'не указана'}</span><span class="rc"><span class="role ${u.role}">${u.role === 'admin' ? 'Администратор' : 'Пользователь'}</span></span><span class="dc ul2" style="display:block">${dmy(u.created_at)}</span><span class="ia">${u.from_env ? `<span class="lock">${ic('lock')}Защищён</span>` : `<button class="ibtn sm" data-edit="${u.id}" aria-label="Изменить" title="Изменить">${ic('edit')}</button>${u.id === ME.id ? '' : `<button class="ibtn sm del" data-del="${u.id}" aria-label="Удалить" title="Удалить">${ic('trash')}</button>`}`}</span></div>`).join('')
         + (users.length === 1 ? emptyCta('users', 'Пока в команде только вы', 'Добавьте сотрудников: они видят платежи и отмечают оплату. Администратор задаётся в .env.', `<button class="btn" type="button" data-adduser>${ic('plus')}Добавить пользователя</button>`) : '');
     };
     await draw();
+    document.addEventListener('billpay:me', () => draw());
     const ufMode = (u) => {
       SILENT = true; uf.reset(); SILENT = false; EDIT = u || null;
       $('#ufTitle').textContent = u ? 'Изменить пользователя' : 'Новый пользователь';
       $('#ufSub').textContent = u ? '@' + u.login + ' · пароль можно оставить пустым' : 'Логин и пароль передайте сотруднику';
       U('login').disabled = !!u; U('login').value = u ? u.login : '';
       if (u) U('name').value = u.name;
+      U('email').value = u && u.email ? u.email : ''; emailNote();
       U('password').placeholder = u ? 'не менять' : 'минимум 6 символов';
       $('#ufSubmit').textContent = u ? 'Сохранить' : 'Добавить';
       $$('[aria-invalid]', uf).forEach((x) => x.removeAttribute('aria-invalid'));
@@ -524,16 +555,19 @@
       e.preventDefault();
       const body = { name: U('name').value.trim() };
       const pass = U('password').value, login = U('login').value.trim();
-      const bad = { login: !EDIT && !/^[a-z0-9._-]{3,32}$/i.test(login), name: !body.name, password: EDIT ? pass.length > 0 && pass.length < 6 : pass.length < 6 };
+      const email = U('email').value.trim();
+      const bad = { login: !EDIT && !/^[a-z0-9._-]{3,32}$/i.test(login), name: !body.name, password: EDIT ? pass.length > 0 && pass.length < 6 : pass.length < 6, email: !!email && !EMAIL_RE.test(email) };
       Object.entries(bad).forEach(([k, v]) => U(k).setAttribute('aria-invalid', v));
       if (bad.login) return toast('Логин: 3–32 символа, латиница, цифры, . _ -');
       if (bad.name) return toast('Укажите имя');
       if (bad.password) return toast('Пароль: минимум 6 символов');
+      if (bad.email) { emailNote('Проверьте адрес: нужен вид name@company.ru'); return U('email').focus(); }
       if (pass) body.password = pass;
+      if (email) body.email = email; else if (EDIT && EDIT.email) body.email = null;
       try {
         if (EDIT) { await BillPayApi.updateUser(EDIT.id, body); toast(`Сохранено<small>${esc(body.name)}</small>`); }
         else { await BillPayApi.createUser({ ...body, login }); toast(`Пользователь добавлен<small>@${esc(login.toLowerCase())}</small>`); }
-      } catch (x) { toast(esc(x.message)); return; }
+      } catch (x) { if (/почт|email/i.test(x.message)) { U('email').setAttribute('aria-invalid', true); emailNote(x.message); } else toast(esc(x.message)); return; }
       ufMode(null); await draw();
     });
     ufMode(null);
@@ -567,7 +601,7 @@
       if (Object.values(bad).some(Boolean)) { toast('Заполните название, сумму и дату'); return; }
       try { await BillPayApi.createRecurringPayment(body); } catch (x) { toast(esc(x.message)); return; } toast(`Платёж «${esc(body.name)}» создан<small>${fmt(body.amount, body.currency)} · ежемесячно</small>`); f.reset(); drawRp();
     });
-    $('#settingsBox').innerHTML = `<div class="kv"><div><div class="lbl">Telegram-чат</div><div class="v">«${esc(meta.telegramChat)}»</div></div><div><div class="lbl">Часовой пояс</div><div class="v">${meta.timezone}</div></div><div><div class="lbl">Напоминание</div><div class="v">за ${meta.remindDaysBefore} дня до срока</div></div></div>`;
+    $('#settingsBox').innerHTML = `<div class="kv"><div><div class="lbl">Telegram-чат</div><div class="v">«${esc(meta.telegramChat)}»</div></div><div><div class="lbl">Часовой пояс</div><div class="v">${meta.timezone}</div></div><div><div class="lbl">Напоминание</div><div class="v">за ${meta.remindDaysBefore} дня до срока</div></div><div><div class="lbl">Почта (SMTP)</div><div class="v ${meta.email && meta.email.enabled ? '' : 'off'}">${meta.email && meta.email.enabled ? 'включена' : 'выключена — SMTP не задан'}</div></div></div>`;
     if (location.hash === '#new') setTimeout(() => $('[name=name]', f).focus({ preventScroll: innerWidth > 1279 }), 300);
     if (location.hash === '#settings') $('#settings').scrollIntoView();
   }

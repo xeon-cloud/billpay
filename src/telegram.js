@@ -33,7 +33,6 @@ function dmy(iso) {
   return `${d}.${m}.${y}`;
 }
 
-// срок уже в окне или прошёл
 function shouldNotify(due, today, daysBefore) {
   return D.diffDays(due, today) <= daysBefore;
 }
@@ -53,4 +52,4 @@ async function sendMessage(token, chatId, text) {
   if (!res.ok || !data.ok) throw new Error(data.description || `Telegram ${res.status}`);
 }
 
-module.exports = { formatReminder, shouldNotify, sendMessage, money, dmy };
+module.exports = { formatReminder, shouldNotify, sendMessage, money, dmy, whenLabel, daysWord };

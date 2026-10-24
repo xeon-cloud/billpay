@@ -57,6 +57,24 @@ paths:
           description: OK
           content: { application/json: { schema: { $ref: '#/components/schemas/User' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      tags: [auth]
+      summary: Своя почта для оповещений (любой пользователь, включая главного админа из .env)
+      description: 'Можно менять только email. null или пустая строка — убрать почту, письма приходить не будут.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MeUpdate' }
+            example: { email: a.smirnova@company.ru }
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { $ref: '#/components/schemas/User' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: 'Передано что-то кроме email', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { $ref: '#/components/responses/EmailTaken' }
+        '422': { $ref: '#/components/responses/Invalid' }
   /auth/logout:
     post:
       tags: [auth]
@@ -235,13 +253,13 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/UserCreate' }
-            example: { login: i.petrov, password: secret123, name: Иван Петров }
+            example: { login: i.petrov, password: secret123, name: Иван Петров, email: i.petrov@company.ru }
       responses:
         '201':
           description: Создан
           content: { application/json: { schema: { $ref: '#/components/schemas/User' } } }
         '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { description: Логин занят }
+        '409': { description: 'Логин занят или почта уже указана у другого пользователя', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '422': { $ref: '#/components/responses/Invalid' }
   /users/{id}:
     parameters: [ { $ref: '#/components/parameters/Id' } ]
@@ -256,12 +274,15 @@ paths:
               properties:
                 name: { type: string }
                 password: { type: string, minLength: 6 }
+                email: { $ref: '#/components/schemas/Email' }
       responses:
         '200':
           description: OK
           content: { application/json: { schema: { $ref: '#/components/schemas/User' } } }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/EmailTaken' }
+        '422': { $ref: '#/components/responses/Invalid' }
     delete:
       tags: [users]
       summary: Удалить пользователя (только admin; главного админа из .env нельзя)
@@ -285,6 +306,7 @@ components:
     Forbidden: { description: Недостаточно прав, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     NotFound: { description: Не найдено, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     Invalid: { description: Ошибка валидации, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    EmailTaken: { description: Почта уже указана у другого пользователя, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   schemas:
     Error:
       type: object
@@ -309,6 +331,13 @@ components:
         role: { type: string, enum: [admin, user] }
         from_env: { type: boolean, description: Главный админ из .env (защищён) }
         created_at: { type: string, format: date, nullable: true }
+        email: { type: string, format: email, nullable: true, description: 'Почта для напоминаний; null — писем нет' }
+    Email:
+      type: string
+      nullable: true
+      maxLength: 254
+      example: a.smirnova@company.ru
+      description: 'Необязательная почта для напоминаний. Хранится в нижнем регистре, уникальна среди пользователей. null или пустая строка — убрать.'
     UserCreate:
       type: object
       required: [login, password, name]
@@ -316,6 +345,13 @@ components:
         login: { type: string }
         password: { type: string, minLength: 6 }
         name: { type: string }
+        email: { $ref: '#/components/schemas/Email' }
+    MeUpdate:
+      type: object
+      required: [email]
+      additionalProperties: false
+      properties:
+        email: { $ref: '#/components/schemas/Email' }
     RecurringPayment:
       type: object
       properties:
@@ -437,6 +473,10 @@ components:
         telegramChat: { type: string }
         remindDaysBefore: { type: integer }
         currentUser: { $ref: '#/components/schemas/User' }
+        email:
+          type: object
+          description: 'Email-оповещения через SMTP: включены, если в .env заданы SMTP_HOST и SMTP_FROM'
+          properties: { enabled: { type: boolean } }
         budgets: { type: object, additionalProperties: { type: number } }
         reminders:
           type: array

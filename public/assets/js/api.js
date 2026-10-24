@@ -31,6 +31,7 @@
     },
     logout: () => request('/auth/logout', { method: 'POST', auth: false }),
     me: () => request('/auth/me'),
+    updateMe: (body) => request('/auth/me', { method: 'PATCH', body }),
 
     getOccurrences: (month = MONTH()) => request('/payment-occurrences?month=' + month),
     listOccurrences: (params = {}, month = MONTH()) => {
@@ -40,7 +41,6 @@
     },
     setPaid: (id, paidAt) => request('/payment-occurrences/' + id, { method: 'PATCH', body: { is_paid: !!paidAt, paid_at: paidAt || null } }),
     getSummary: (month = MONTH()) => request('/payments/summary?month=' + month),
-    // прошлые месяцы
     getSummaryOnDate: (date) => request('/payments/summary?include=items&date=' + date),
 
     getRecurringPayments: () => request('/recurring-payments'),

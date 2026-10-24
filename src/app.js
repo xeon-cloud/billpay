@@ -34,7 +34,6 @@ async function createApp({ pool = createPool(), loginRateMax = config.loginRateL
       useDefaults: false,
       directives: {
         defaultSrc: ["'self'"],
-        // inline: window.BILLPAY_BOOT и обработчики в разметке
         scriptSrc: ["'self'", "'unsafe-inline'"],
         scriptSrcAttr: ["'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
@@ -82,7 +81,6 @@ async function createApp({ pool = createPool(), loginRateMax = config.loginRateL
   app.get('/api/v1/openapi.json', (_req, res) => res.json(spec));
   app.use('/api/v1/docs', swaggerUi.serve, swaggerUi.setup(spec, { customSiteTitle: 'BillPay API', swaggerOptions: { withCredentials: true } }));
 
-  // после статики, чтобы не ходить в базу за каждым файлом
   app.use(auth.attach);
 
   app.use('/api/v1', apiRouter({ pool, auth, payments, loginLimiter }));
@@ -95,13 +93,12 @@ async function createApp({ pool = createPool(), loginRateMax = config.loginRateL
     cache.set(name, html);
     return html;
   };
-  // данные в страницу сразу, чтобы интерфейс не мигал
   const boot = (data) => `<script>window.BILLPAY_BOOT=${JSON.stringify(data).replace(/</g, '\\u003c')}</script>`;
   const render = (res, name, data) => {
     res.set('Cache-Control', 'no-store');
     res.type('html').send(readView(name).replace('<!--BILLPAY_BOOT-->', data ? boot(data) : ''));
   };
-  const appBoot = (user) => ({ today: D.today(), timezone: config.timezone, telegramChat: config.telegramChat, remindDaysBefore: config.remindDaysBefore, currentUser: user });
+  const appBoot = (user) => ({ today: D.today(), timezone: config.timezone, telegramChat: config.telegramChat, remindDaysBefore: config.remindDaysBefore, currentUser: user, email: { enabled: config.emailEnabled } });
 
   const page = (name, { admin = false } = {}) => (req, res) => {
     if (!req.user) return res.redirect(302, '/login?next=' + encodeURIComponent(req.originalUrl));

@@ -1,0 +1,11 @@
+services:
+  db:
+    ports:
+      - "127.0.0.1:${DB_HOST_PORT:-5432}:5432"
+
+  bot:
+    network_mode: host
+    networks: !reset []
+    environment:
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: ${DB_HOST_PORT:-5432}

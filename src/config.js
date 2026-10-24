@@ -6,7 +6,6 @@ const env = process.env;
 const bool = (v, d) => (v === undefined || v === '' ? d : /^(1|true|yes|on)$/i.test(v));
 const production = env.NODE_ENV === 'production';
 
-// DATABASE_URL, если задан; иначе собираем из POSTGRES_*
 function databaseUrl() {
   if (env.DATABASE_URL) return env.DATABASE_URL;
   const u = encodeURIComponent(env.POSTGRES_USER || 'billpay');
@@ -39,8 +38,17 @@ const config = {
   remindDaysBefore: +env.REMIND_DAYS_BEFORE || 3,
   databaseUrl: databaseUrl(),
   databaseSsl: bool(env.DATABASE_SSL, false),
-  dbPoolMax: +env.DB_POOL_MAX || 10
+  dbPoolMax: +env.DB_POOL_MAX || 10,
+  smtp: {
+    host: (env.SMTP_HOST || '').trim(),
+    port: +env.SMTP_PORT || 0,
+    user: (env.SMTP_USER || '').trim(),
+    pass: env.SMTP_PASS || '',
+    from: (env.SMTP_FROM || '').trim()
+  },
+  appUrl: (env.APP_URL || '').trim().replace(/\/+$/, '')
 };
+config.emailEnabled = !!(config.smtp.host && config.smtp.from);
 
 if (!config.admin.password) {
   throw new Error('ADMIN_PASSWORD не задан. Главный администратор обязателен (см. .env.example).');

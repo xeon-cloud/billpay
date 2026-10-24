@@ -12,7 +12,6 @@ services:
       PGTZ: ${TZ:-Europe/Moscow}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    # наружу не публикуется; локально — docker-compose.dev.yml
     networks: [backend]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
@@ -36,7 +35,6 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      # пусто, чтобы приложение собрало адрес из POSTGRES_HOST=db
       DATABASE_URL: ""
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
@@ -70,6 +68,18 @@ services:
     stop_grace_period: 15s
     healthcheck:
       disable: true
+    logging: *logging
+
+  mailpit:
+    image: axllent/mailpit:v1
+    restart: unless-stopped
+    profiles: [mailpit]
+    environment:
+      MP_MAX_MESSAGES: 500
+      TZ: ${TZ:-Europe/Moscow}
+    ports:
+      - "127.0.0.1:${MAILPIT_PORT:-8025}:8025"
+    networks: [backend]
     logging: *logging
 
 volumes:

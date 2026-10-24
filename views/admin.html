@@ -22,7 +22,6 @@
 <link rel="stylesheet" href="/assets/fonts/fonts.css">
 <link rel="stylesheet" href="/assets/css/tokens.css">
 <link rel="stylesheet" href="/assets/css/app.css">
-<!-- Тема до первой отрисовки — без мигания -->
 <script>try{var t=localStorage.getItem('billpay-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=t;document.querySelector('meta[name=theme-color]').content=t==='light'?'#F4F3EF':'#0A0A0A'}catch(e){}</script>
 </head>
 <body data-page="admin">
@@ -38,7 +37,7 @@
         <div class="col">
           <section class="card">
             <div class="th"><span class="h3">Пользователи</span><span class="lbl" id="ucount"></span></div>
-            <div class="ug gh"><span>Имя</span><span>Роль</span><span>Создан</span><span></span></div>
+            <div class="ug gh"><span>Имя</span><span>Почта для оповещений</span><span>Роль</span><span>Создан</span><span></span></div>
             <div id="users"></div>
           </section>
 
@@ -50,6 +49,7 @@
                 <div class="f"><label for="uName">Имя <em>*</em></label><input class="inp" id="uName" name="name" placeholder="Имя и фамилия" autocomplete="off"></div>
               </div>
               <div class="f"><label for="uPass">Пароль <em>*</em></label><input class="inp" id="uPass" name="password" type="password" autocomplete="new-password" placeholder="минимум 6 символов"></div>
+              <div class="f"><label for="uEmail">Почта для оповещений <span class="optl">необязательно</span></label><input class="inp" id="uEmail" name="email" type="email" inputmode="email" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="name@company.ru" aria-describedby="uEmailHint"><span class="fnote" id="uEmailHint">Напоминания о сроках придут и на эту почту. Пусто — писем не будет.</span></div>
             </div>
             <div class="fb" style="margin-top:20px"><button class="btn ghost" type="reset">Отмена</button><button class="btn" type="submit" id="ufSubmit">Добавить</button></div>
           </form>
