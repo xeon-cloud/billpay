@@ -563,7 +563,7 @@
       if (bad.password) return toast('Пароль: минимум 6 символов');
       if (bad.email) { emailNote('Проверьте адрес: нужен вид name@company.ru'); return U('email').focus(); }
       if (pass) body.password = pass;
-      if (email) body.email = email; else if (EDIT && EDIT.email) body.email = null;
+      if (EDIT || email) body.email = email || null;
       try {
         if (EDIT) { await BillPayApi.updateUser(EDIT.id, body); toast(`Сохранено<small>${esc(body.name)}</small>`); }
         else { await BillPayApi.createUser({ ...body, login }); toast(`Пользователь добавлен<small>@${esc(login.toLowerCase())}</small>`); }

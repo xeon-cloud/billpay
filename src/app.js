@@ -72,7 +72,7 @@ async function createApp({ pool = createPool(), loginRateMax = config.loginRateL
   app.use(express.json({ limit: '100kb' }));
   app.use(cookieParser());
 
-  app.use('/assets', express.static(path.join(config.root, 'public', 'assets'), { maxAge: config.production ? '1d' : 0, index: false }));
+  app.use('/assets', express.static(path.join(config.root, 'public', 'assets'), { maxAge: 0, index: false }));
   app.get('/favicon.ico', (_req, res) => res.sendFile(path.join(config.root, 'public', 'assets', 'img', 'favicon.ico')));
 
   const specPath = path.join(config.root, 'docs', 'openapi.yaml');
