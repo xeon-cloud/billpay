@@ -1,0 +1,348 @@
+openapi: 3.0.3
+info:
+  title: BillPay API
+  version: 1.1.0
+  description: |
+    Напоминания о регулярных платежах команды.
+    Авторизация: `POST /api/v1/auth/login` ставит httpOnly-cookie `billpay_session`. В Swagger достаточно
+    выполнить login, и cookie подставится в следующие запросы. Для внешних клиентов можно передавать
+    `access_token` в заголовке `Authorization: Bearer <token>`.
+    Роли: **admin** управляет платежами и пользователями, **user** смотрит список и меняет статус и дату оплаты.
+servers:
+  - url: /api/v1
+security:
+  - cookieAuth: []
+  - bearerAuth: []
+tags:
+  - name: auth
+  - name: recurring-payments
+  - name: payment-occurrences
+  - name: payments
+  - name: users
+  - name: meta
+paths:
+  /health:
+    get:
+      tags: [meta]
+      security: []
+      summary: Проверка работоспособности (приложение и PostgreSQL). Для Docker также есть GET /healthz вне /api/v1
+      responses:
+        '200': { description: 'OK: { status: ok, db: ok, today }' }
+        '503': { description: База данных недоступна }
+  /auth/login:
+    post:
+      tags: [auth]
+      security: []
+      summary: Вход по логину и паролю
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+            example: { login: admin, password: "<ADMIN_PASSWORD из .env>" }
+      responses:
+        '200':
+          description: Успешный вход, установлен cookie billpay_session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { description: 'Слишком много неудачных попыток входа с этого IP (LOGIN_RATE_MAX за LOGIN_RATE_WINDOW_MIN минут)' }
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Текущий пользователь
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { $ref: '#/components/schemas/User' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/logout:
+    post:
+      tags: [auth]
+      security: []
+      summary: Выход (удаляет cookie)
+      responses:
+        '204': { description: Сессия завершена }
+  /meta:
+    get:
+      tags: [meta]
+      summary: Настройки, бюджеты и напоминания месяца для интерфейса
+      parameters: [ { $ref: '#/components/parameters/Month' } ]
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { $ref: '#/components/schemas/Meta' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /recurring-payments:
+    get:
+      tags: [recurring-payments]
+      summary: Список регулярных платежей
+      parameters:
+        - { name: include_inactive, in: query, schema: { type: boolean }, description: Включить удалённые }
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/RecurringPayment' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [recurring-payments]
+      summary: Создать регулярный платёж (только admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecurringPaymentCreate' }
+            example: { name: Аренда склада, amount: 40000, currency: RUB, next_date: '2026-11-05', periodicity: monthly }
+      responses:
+        '201':
+          description: Создан, вместе с первым периодом оплаты
+          content: { application/json: { schema: { $ref: '#/components/schemas/RecurringPayment' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Invalid' }
+  /recurring-payments/{id}:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    patch:
+      tags: [recurring-payments]
+      summary: Изменить платёж (только admin). Затрагивает неоплаченные периоды с текущего месяца.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecurringPaymentUpdate' }
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { $ref: '#/components/schemas/RecurringPayment' } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Invalid' }
+    delete:
+      tags: [recurring-payments]
+      summary: Удалить платёж (только admin). История оплаченных периодов сохраняется.
+      responses:
+        '204': { description: Удалён }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /payment-occurrences:
+    get:
+      tags: [payment-occurrences]
+      summary: Периоды оплаты за месяц (каждый месяц — отдельный период со своим статусом)
+      parameters:
+        - { $ref: '#/components/parameters/Month' }
+        - { name: status, in: query, schema: { type: string, enum: [paid, unpaid, overdue] } }
+        - { name: currency, in: query, schema: { $ref: '#/components/schemas/Currency' } }
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Occurrence' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /payment-occurrences/{id}:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    get:
+      tags: [payment-occurrences]
+      summary: Конкретный период оплаты (admin и user)
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { $ref: '#/components/schemas/Occurrence' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [payment-occurrences]
+      summary: Отметить оплату / снять отметку (admin и user). Меняются только is_paid и paid_at.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OccurrencePatch' }
+            examples:
+              paid: { value: { is_paid: true, paid_at: '2026-10-23' } }
+              unpaid: { value: { is_paid: false, paid_at: null } }
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { $ref: '#/components/schemas/Occurrence' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Invalid' }
+  /payments/summary:
+    get:
+      tags: [payments]
+      summary: Итоги за месяц отдельно по каждой валюте, без конвертации
+      parameters: [ { $ref: '#/components/parameters/Month' } ]
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Summary' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /users:
+    get:
+      tags: [users]
+      summary: Пользователи (только admin). Первым идёт главный админ из .env.
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/User' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [users]
+      summary: Создать пользователя (только admin). Роль всегда user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserCreate' }
+            example: { login: i.petrov, password: secret123, name: Иван Петров }
+      responses:
+        '201':
+          description: Создан
+          content: { application/json: { schema: { $ref: '#/components/schemas/User' } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Логин занят }
+        '422': { $ref: '#/components/responses/Invalid' }
+  /users/{id}:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    patch:
+      tags: [users]
+      summary: Изменить пользователя (только admin; главного админа из .env нельзя)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                password: { type: string, minLength: 6 }
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { $ref: '#/components/schemas/User' } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [users]
+      summary: Удалить пользователя (только admin; главного админа из .env нельзя)
+      responses:
+        '204': { description: Удалён }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+components:
+  securitySchemes:
+    cookieAuth: { type: apiKey, in: cookie, name: billpay_session }
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: integer } }
+    Month: { name: month, in: query, required: false, schema: { type: string, pattern: '^\d{4}-\d{2}$', example: '2026-10' }, description: Месяц YYYY-MM (по умолчанию текущий) }
+  responses:
+    Unauthorized: { description: Не авторизован, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Forbidden: { description: Недостаточно прав, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    NotFound: { description: Не найдено, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Invalid: { description: Ошибка валидации, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  schemas:
+    Error:
+      type: object
+      properties: { detail: { type: string } }
+    Currency: { type: string, enum: [RUB, USD, EUR] }
+    LoginRequest:
+      type: object
+      required: [login, password]
+      properties: { login: { type: string }, password: { type: string } }
+    LoginResponse:
+      type: object
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        access_token: { type: string }
+        token_type: { type: string, example: bearer }
+    User:
+      type: object
+      properties:
+        id: { type: integer }
+        login: { type: string }
+        name: { type: string }
+        role: { type: string, enum: [admin, user] }
+        from_env: { type: boolean, description: Главный админ из .env (защищён) }
+        created_at: { type: string, format: date, nullable: true }
+    UserCreate:
+      type: object
+      required: [login, password, name]
+      properties:
+        login: { type: string }
+        password: { type: string, minLength: 6 }
+        name: { type: string }
+    RecurringPayment:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        amount: { type: number }
+        currency: { $ref: '#/components/schemas/Currency' }
+        periodicity: { type: string, enum: [monthly] }
+        start_date: { type: string, format: date }
+        next_date: { type: string, format: date, nullable: true, description: Ближайшая неоплаченная дата }
+        active: { type: boolean }
+        created_at: { type: string, format: date }
+    RecurringPaymentCreate:
+      type: object
+      required: [name, amount, currency, next_date]
+      properties:
+        name: { type: string, maxLength: 120 }
+        amount: { type: number, exclusiveMinimum: true, minimum: 0 }
+        currency: { $ref: '#/components/schemas/Currency' }
+        next_date: { type: string, format: date }
+        periodicity: { type: string, enum: [monthly], default: monthly }
+    RecurringPaymentUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        amount: { type: number }
+        currency: { $ref: '#/components/schemas/Currency' }
+        next_date: { type: string, format: date }
+    Occurrence:
+      type: object
+      properties:
+        id: { type: integer }
+        recurring_payment_id: { type: integer }
+        month: { type: string, example: '2026-10' }
+        name: { type: string }
+        amount: { type: number }
+        currency: { $ref: '#/components/schemas/Currency' }
+        due_date: { type: string, format: date }
+        paid_at: { type: string, format: date, nullable: true }
+        is_paid: { type: boolean }
+        status: { type: string, enum: [paid, unpaid, overdue], description: 'overdue: со следующего дня после due_date' }
+        overdue_days: { type: integer, description: Дней просрочки (для оплаченных — на дату оплаты) }
+    OccurrencePatch:
+      type: object
+      properties:
+        is_paid: { type: boolean }
+        paid_at: { type: string, format: date, nullable: true, description: 'Фактическая дата; по умолчанию сегодня' }
+    Summary:
+      type: object
+      properties:
+        currency: { $ref: '#/components/schemas/Currency' }
+        to_pay: { type: number, description: Не оплачено и не просрочено }
+        paid: { type: number }
+        overdue: { type: number }
+        total: { type: number }
+        count: { type: integer }
+    Meta:
+      type: object
+      properties:
+        today: { type: string, format: date }
+        month: { type: string }
+        timezone: { type: string }
+        telegramChat: { type: string }
+        remindDaysBefore: { type: integer }
+        currentUser: { $ref: '#/components/schemas/User' }
+        budgets: { type: object, additionalProperties: { type: number } }
+        reminders:
+          type: array
+          items:
+            type: object
+            properties:
+              occurrence_id: { type: integer }
+              send_date: { type: string, format: date }
+              time: { type: string }
+              status: { type: string, enum: [sent, scheduled] }

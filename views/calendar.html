@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Календарь — BillPay</title>
+<meta name="description" content="BillPay — напоминания о регулярных платежах команды">
+<meta name="theme-color" content="#0A0A0A">
+<link rel="icon" href="/assets/img/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/assets/img/apple-touch-icon.png">
+<link rel="manifest" href="/assets/site.webmanifest">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="BillPay">
+<meta property="og:title" content="Календарь — BillPay">
+<meta property="og:description" content="Напоминания о регулярных платежах команды: список, статусы, итоги по валютам и Telegram.">
+<meta property="og:image" content="/assets/img/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="/assets/fonts/fonts.css">
+<link rel="stylesheet" href="/assets/css/tokens.css">
+<link rel="stylesheet" href="/assets/css/app.css">
+<!-- Тема до первой отрисовки — без мигания -->
+<script>try{var t=localStorage.getItem('billpay-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=t;document.querySelector('meta[name=theme-color]').content=t==='light'?'#F4F3EF':'#0A0A0A'}catch(e){}</script>
+</head>
+<body data-page="calendar">
+<div class="layout">
+  <aside class="side" id="side"></aside>
+  <main class="main">
+    <header class="top" id="top"></header>
+    <div class="content">
+      <div class="phead">
+        <div><div class="lbl kicker">Календарь платежей</div><h1>&nbsp;</h1></div>
+        <span class="today" id="today"></span>
+      </div>
+      <div class="cal-wrap">
+        <section class="card" id="month"></section>
+        <div class="aside">
+          <section class="card" id="upcoming"></section>
+          <section class="card tgc" id="cal-tg"></section>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="/assets/js/icons.js"></script>
+<!--BILLPAY_BOOT-->
+<script src="/assets/js/api.js"></script>
+<script src="/assets/js/app.js"></script>
+</body>
+</html>

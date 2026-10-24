@@ -1,0 +1,5 @@
+# Postgres на 127.0.0.1:5432 для npm run dev
+services:
+  db:
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"

@@ -1,0 +1,79 @@
+name: billpay
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-billpay}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Задайте POSTGRES_PASSWORD в .env}
+      POSTGRES_DB: ${POSTGRES_DB:-billpay}
+      TZ: ${TZ:-Europe/Moscow}
+      PGTZ: ${TZ:-Europe/Moscow}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # наружу не публикуется; локально — docker-compose.dev.yml
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    shm_size: 128mb
+    logging: &logging
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  app:
+    build: .
+    image: billpay-app:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # пусто, чтобы приложение собрало адрес из POSTGRES_HOST=db
+      DATABASE_URL: ""
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${PORT:-3000}:3000"
+    networks: [backend]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 15s
+    logging: *logging
+
+  bot:
+    build: .
+    image: billpay-app:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ""
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+    command: ["node", "src/bot.js"]
+    networks: [backend]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 15s
+    healthcheck:
+      disable: true
+    logging: *logging
+
+volumes:
+  pgdata:
+
+networks:
+  backend:

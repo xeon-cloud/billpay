@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Вход — BillPay</title>
+<meta name="description" content="BillPay — напоминания о регулярных платежах команды">
+<meta name="theme-color" content="#0A0A0A">
+<link rel="icon" href="/assets/img/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/assets/img/apple-touch-icon.png">
+<link rel="manifest" href="/assets/site.webmanifest">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="BillPay">
+<meta property="og:title" content="Вход — BillPay">
+<meta property="og:description" content="Напоминания о регулярных платежах команды: список, статусы, итоги по валютам и Telegram.">
+<meta property="og:image" content="/assets/img/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="/assets/fonts/fonts.css">
+<link rel="stylesheet" href="/assets/css/tokens.css">
+<link rel="stylesheet" href="/assets/css/app.css">
+<!-- Тема до первой отрисовки — без мигания -->
+<script>try{var t=localStorage.getItem('billpay-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=t;document.querySelector('meta[name=theme-color]').content=t==='light'?'#F4F3EF':'#0A0A0A'}catch(e){}</script>
+</head>
+<body data-page="login">
+<div class="auth">
+  <section class="lgl">
+    <div class="lgp">
+      <a class="logo" href="/"><img src="/assets/img/logo-128.png" width="28" height="28" alt=""><span class="wm">billpay</span></a>
+      <div class="lgh">
+        <img src="/assets/img/logo-512.png" width="120" height="120" alt="BillPay">
+        <div class="lbl kicker">Регулярные платежи команды</div>
+        <h1>Платежи команды.<br><span>Вовремя.</span></h1>
+        <p>Ежемесячные платежи, статусы оплаты и напоминания в Telegram за 3 дня до срока.</p>
+      </div>
+      <ol class="steps">
+        <li><span class="sn">01</span><div><b>Администратор вносит платёж</b><span>Название, сумма, валюта и дата ближайшей оплаты</span></div></li>
+        <li><span class="sn">02</span><div><b>Бот напоминает за 3 дня</b><span>Сообщение в чат команды с кнопкой «Оплачено»</span></div></li>
+        <li><span class="sn">03</span><div><b>Команда отмечает оплату</b><span>Период закрыт, история сохраняется</span></div></li>
+      </ol>
+    </div>
+  </section>
+  <section class="lgr">
+    <div class="bar"><a class="more" href="/"><svg class="i" viewBox="0 0 24 24"><path d="M15 18.5 8.5 12 15 5.5"/></svg>О продукте</a><span data-tt-slot></span></div>
+    <div class="mid">
+      <form class="lc" id="loginForm" novalidate>
+        <a class="logo" href="/"><img src="/assets/img/logo-128.png" width="28" height="28" alt=""><span class="wm">billpay</span></a>
+        <div class="lbl kicker">Вход</div>
+        <h2>Добро пожаловать</h2>
+        <p class="s">Используйте логин, выданный администратором</p>
+        <div class="fs">
+          <div class="f"><label for="lLogin">Логин</label><input class="inp" id="lLogin" name="login" autocomplete="username"></div>
+          <div class="f"><label for="lPass">Пароль</label><div class="pw"><input class="inp" id="lPass" name="password" type="password" autocomplete="current-password" placeholder="••••••••"><button type="button" id="pwToggle">показать</button></div></div>
+        </div>
+        <div class="err" id="err" role="alert"></div>
+        <button class="btn lg full" type="submit">Войти<svg class="i" viewBox="0 0 24 24"><path d="M4.5 12h15"/><path d="m13.5 6 6 6-6 6"/></svg></button>
+        <p class="note"><svg class="i" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg><span>Регистрации нет — аккаунты создаёт администратор.</span></p>
+      </form>
+    </div>
+  </section>
+</div>
+<!--BILLPAY_BOOT-->
+<script src="/assets/js/icons.js"></script>
+<script src="/assets/js/api.js"></script>
+<script src="/assets/js/app.js"></script>
+</body>
+</html>

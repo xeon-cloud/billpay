@@ -1,0 +1,14 @@
+{
+  "name": "BillPay",
+  "short_name": "BillPay",
+  "description": "Напоминания о регулярных платежах команды",
+  "start_url": "/app",
+  "display": "standalone",
+  "background_color": "#0A0A0A",
+  "theme_color": "#0A0A0A",
+  "icons": [
+    { "src": "/assets/img/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/assets/img/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/assets/img/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

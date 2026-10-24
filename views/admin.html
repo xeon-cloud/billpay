@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Команда — BillPay</title>
+<meta name="description" content="BillPay — напоминания о регулярных платежах команды">
+<meta name="theme-color" content="#0A0A0A">
+<link rel="icon" href="/assets/img/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/assets/img/apple-touch-icon.png">
+<link rel="manifest" href="/assets/site.webmanifest">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="BillPay">
+<meta property="og:title" content="Команда — BillPay">
+<meta property="og:description" content="Напоминания о регулярных платежах команды: список, статусы, итоги по валютам и Telegram.">
+<meta property="og:image" content="/assets/img/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="/assets/fonts/fonts.css">
+<link rel="stylesheet" href="/assets/css/tokens.css">
+<link rel="stylesheet" href="/assets/css/app.css">
+<!-- Тема до первой отрисовки — без мигания -->
+<script>try{var t=localStorage.getItem('billpay-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=t;document.querySelector('meta[name=theme-color]').content=t==='light'?'#F4F3EF':'#0A0A0A'}catch(e){}</script>
+</head>
+<body data-page="admin">
+<div class="layout">
+  <aside class="side" id="side"></aside>
+  <main class="main">
+    <header class="top" id="top"></header>
+    <div class="content">
+      <div class="phead">
+        <div><div class="lbl kicker">Администрирование</div><h1>Команда <span>и платежи</span></h1></div>
+      </div>
+      <div class="adm">
+        <div class="col">
+          <section class="card">
+            <div class="th"><span class="h3">Пользователи</span><span class="lbl" id="ucount"></span></div>
+            <div class="ug gh"><span>Имя</span><span>Роль</span><span>Создан</span><span></span></div>
+            <div id="users"></div>
+          </section>
+
+          <form class="card form uform" id="userForm" novalidate autocomplete="off">
+            <div class="fh"><span class="ic2"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20c.8-3.6 3.8-5.5 7.5-5.5s6.7 1.9 7.5 5.5"/></svg></span><div><b id="ufTitle">Новый пользователь</b><small id="ufSub">Логин и пароль передайте сотруднику</small></div></div>
+            <div class="fs">
+              <div class="f2">
+                <div class="f"><label for="uLogin">Логин <em>*</em></label><input class="inp" id="uLogin" name="login" placeholder="i.ivanov" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
+                <div class="f"><label for="uName">Имя <em>*</em></label><input class="inp" id="uName" name="name" placeholder="Имя и фамилия" autocomplete="off"></div>
+              </div>
+              <div class="f"><label for="uPass">Пароль <em>*</em></label><input class="inp" id="uPass" name="password" type="password" autocomplete="new-password" placeholder="минимум 6 символов"></div>
+            </div>
+            <div class="fb" style="margin-top:20px"><button class="btn ghost" type="reset">Отмена</button><button class="btn" type="submit" id="ufSubmit">Добавить</button></div>
+          </form>
+
+          <section class="card">
+            <div class="th"><span class="h3">Регулярные платежи</span><span class="lbl" id="rpcount"></span></div>
+            <div id="rplist"></div>
+          </section>
+
+          <section class="card perm">
+            <div class="pc"><span class="h3">Администратор</span><ul><li>Создаёт и редактирует регулярные платежи</li><li>Управляет пользователями</li><li>Отмечает оплату и даты</li></ul></div>
+            <div class="pc"><span class="h3">Пользователь</span><ul><li>Видит список платежей</li><li>Отмечает «Оплачено / Не оплачено»</li><li>Указывает фактическую дату</li><li class="x">Не управляет платежами и пользователями</li></ul></div>
+          </section>
+
+          <section class="card" id="settings">
+            <div class="th"><span class="h3">Настройки</span></div>
+            <div id="settingsBox"></div>
+          </section>
+        </div>
+
+        <form class="card form" id="newPayment" novalidate>
+          <span id="new"></span>
+          <div class="fh"><span class="ic2"><svg class="i" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></svg></span><div><b>Новый регулярный платёж</b><small>Каждый месяц — отдельный период</small></div></div>
+          <div class="fs">
+            <div class="f"><label for="pName">Название <em>*</em></label><input class="inp" id="pName" name="name" placeholder="Например, аренда офиса" autocomplete="off" required></div>
+            <div class="f2">
+              <div class="f"><label for="pAmount">Сумма <em>*</em></label><input class="inp" id="pAmount" name="amount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" required></div>
+              <div class="f"><span class="lab">Валюта <em>*</em></span>
+                <div class="seg" role="radiogroup" aria-label="Валюта">
+                  <label><input type="radio" name="currency" value="RUB" checked>RUB</label>
+                  <label><input type="radio" name="currency" value="USD">USD</label>
+                  <label><input type="radio" name="currency" value="EUR">EUR</label>
+                </div></div>
+            </div>
+            <div class="f2">
+              <div class="f"><label for="pDate">Ближайшая оплата <em>*</em></label><input class="inp" id="pDate" name="next_date" type="date" required></div>
+              <div class="f"><label for="pPer">Периодичность</label><div class="sel"><select class="inp" id="pPer" name="periodicity"><option value="monthly">Ежемесячно</option></select><svg class="i" viewBox="0 0 24 24"><path d="m6 9.5 6 6 6-6"/></svg></div></div>
+            </div>
+            <div class="hint" id="remHint"></div>
+          </div>
+          <div class="fb" style="margin-top:24px"><button class="btn ghost" type="reset">Очистить</button><button class="btn" type="submit">Создать платёж</button></div>
+        </form>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="/assets/js/icons.js"></script>
+<!--BILLPAY_BOOT-->
+<script src="/assets/js/api.js"></script>
+<script src="/assets/js/app.js"></script>
+</body>
+</html>
