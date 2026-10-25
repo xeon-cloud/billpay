@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Логи — BillPay</title>
+<meta name="description" content="BillPay — напоминания о регулярных платежах команды">
+<meta name="theme-color" content="#0A0A0A">
+<link rel="icon" href="/assets/img/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/img/favicon-16.png">
+<link rel="apple-touch-icon" href="/assets/img/apple-touch-icon.png">
+<link rel="manifest" href="/assets/site.webmanifest">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="BillPay">
+<meta property="og:title" content="Логи — BillPay">
+<meta property="og:description" content="Напоминания о регулярных платежах команды: список, статусы, итоги по валютам и Telegram.">
+<meta property="og:image" content="/assets/img/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="/assets/fonts/fonts.css">
+<link rel="stylesheet" href="/assets/css/tokens.css?v=5">
+<link rel="stylesheet" href="/assets/css/app.css?v=5">
+<link rel="stylesheet" href="/assets/css/periods.css?v=5">
+<link rel="stylesheet" href="/assets/css/logs.css?v=5">
+<script>try{var t=localStorage.getItem('billpay-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=t;document.querySelector('meta[name=theme-color]').content=t==='light'?'#F4F3EF':'#0A0A0A'}catch(e){}</script>
+</head>
+<body data-page="logs">
+<div class="layout">
+  <aside class="side" id="side"></aside>
+  <main class="main">
+    <header class="top" id="top"></header>
+    <div class="content">
+      <div class="phead">
+        <div><div class="lbl kicker">Администрирование</div><h1>Логи <span>входы в систему</span></h1></div>
+        <span class="today" id="today"></span>
+      </div>
+
+      <section class="card pt" id="logs">
+        <div class="pt-h lg-h">
+          <span class="h3">Авторизация</span>
+          <span class="lg-note" id="lgNote"></span>
+        </div>
+        <div class="pt-bar" id="bar">
+          <label class="psearch" id="psearch">
+            <span data-ic="search"></span>
+            <input id="lq" type="search" placeholder="Логин, IP или устройство" autocomplete="off" spellcheck="false" maxlength="100" aria-label="Поиск по логину, IP или устройству">
+            <button type="button" class="pclear" id="lqclear" aria-label="Очистить поиск" hidden><span data-ic="x"></span></button>
+          </label>
+          <div class="fgroup" id="fgroup"></div>
+          <div class="mbtns">
+            <button class="fbtn ic" type="button" data-sheet aria-label="Фильтры"><span data-ic="filter"></span><span class="badge" id="fcount" hidden>0</span></button>
+          </div>
+        </div>
+        <div class="pt-tabs">
+          <div class="chips" id="chips" role="group" aria-label="Тип события"></div>
+          <button class="more reset-l" type="button" data-reset id="resetL" hidden>Сбросить</button>
+        </div>
+        <div class="lgx la gh" role="row"><span>Время</span><span>Пользователь</span><span>Результат</span><span>IP-адрес</span><span>Устройство</span><span></span></div>
+        <div id="rows" aria-live="polite"></div>
+        <div class="lg-foot" id="foot"></div>
+      </section>
+    </div>
+  </main>
+</div>
+<script src="/assets/js/icons.js?v=5"></script>
+<!--BILLPAY_BOOT-->
+<script src="/assets/js/api.js?v=5"></script>
+<script src="/assets/js/app.js?v=5"></script>
+
+<div class="sheet-ov" id="sheet" aria-hidden="true">
+  <div class="sheet" role="dialog" aria-label="Фильтры">
+    <div class="grab"></div>
+    <div class="sh-h"><b>Фильтры</b><button class="more" type="button" data-reset>Сбросить</button></div>
+    <div class="sh-b" id="shBody"></div>
+    <div class="sh-f"><button class="btn full lg" type="button" data-close-sheet id="shApply">Показать</button></div>
+  </div>
+</div>
+
+<div class="sheet-ov" id="detail" aria-hidden="true">
+  <div class="sheet lgd" role="dialog" aria-label="Запись журнала" id="detailBox"></div>
+</div>
+</body>
+</html>

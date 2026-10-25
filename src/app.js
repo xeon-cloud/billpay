@@ -13,6 +13,7 @@ const { createPool, waitForDb, migrate } = require('./db');
 const { createAuth, upsertEnvAdmin } = require('./auth');
 const { createPayments } = require('./payments');
 const apiRouter = require('./routes/api');
+const { createAudit } = require('./audit');
 
 async function initDb(pool) {
   await waitForDb(pool);
@@ -24,6 +25,7 @@ async function createApp({ pool = createPool(), loginRateMax = config.loginRateL
   await initDb(pool);
   const auth = createAuth(pool);
   const payments = createPayments(pool);
+  const audit = createAudit(pool, { envAdminId: auth.ENV_ADMIN_ID });
   const app = express();
   const VIEWS = path.join(config.root, 'views');
 
@@ -67,7 +69,13 @@ async function createApp({ pool = createPool(), loginRateMax = config.loginRateL
     skipSuccessfulRequests: true,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
-    handler: (_req, res) => res.status(429).json({ detail: 'Слишком много попыток входа. Попробуйте позже.' })
+    handler: async (req, res) => {
+      if (req.rateLimit && req.rateLimit.used === req.rateLimit.limit + 1) {
+        const login = req.body && req.body.login;
+        await audit.auth(req, { event: 'login', ok: false, reason: 'rate_limited', user: await auth.findByLogin(login).catch(() => null), login });
+      }
+      res.status(429).json({ detail: 'Слишком много попыток входа. Попробуйте позже.' });
+    }
   });
   app.use(express.json({ limit: '100kb' }));
   app.use(cookieParser());
@@ -83,7 +91,7 @@ async function createApp({ pool = createPool(), loginRateMax = config.loginRateL
 
   app.use(auth.attach);
 
-  app.use('/api/v1', apiRouter({ pool, auth, payments, loginLimiter }));
+  app.use('/api/v1', apiRouter({ pool, auth, payments, loginLimiter, audit }));
   app.use('/api', (_req, res) => res.status(404).json({ detail: 'Не найдено' }));
 
   const cache = new Map();
@@ -98,7 +106,7 @@ async function createApp({ pool = createPool(), loginRateMax = config.loginRateL
     res.set('Cache-Control', 'no-store');
     res.type('html').send(readView(name).replace('<!--BILLPAY_BOOT-->', data ? boot(data) : ''));
   };
-  const appBoot = (user) => ({ today: D.today(), timezone: config.timezone, telegramChat: config.telegramChat, remindDaysBefore: config.remindDaysBefore, currentUser: user, email: { enabled: config.emailEnabled } });
+  const appBoot = (user) => ({ today: D.today(), timezone: config.timezone, telegramChat: config.telegramChat, remindDaysBefore: config.remindDaysBefore, currentUser: user, email: { enabled: config.emailEnabled }, logRetentionDays: config.logRetentionDays });
 
   const page = (name, { admin = false } = {}) => (req, res) => {
     if (!req.user) return res.redirect(302, '/login?next=' + encodeURIComponent(req.originalUrl));
@@ -114,6 +122,7 @@ async function createApp({ pool = createPool(), loginRateMax = config.loginRateL
   app.get('/app', page('app'));
   app.get('/app/calendar', page('calendar'));
   app.get('/app/admin', page('admin', { admin: true }));
+  app.get('/app/logs', page('logs', { admin: true }));
 
   const legacy = { '/index.html': '/app', '/calendar.html': '/app/calendar', '/admin.html': '/app/admin', '/login.html': '/login', '/landing.html': '/' };
   Object.entries(legacy).forEach(([from, to]) => app.get(from, (_req, res) => res.redirect(301, to)));

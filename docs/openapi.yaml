@@ -26,6 +26,7 @@ tags:
   - name: payments
   - name: users
   - name: meta
+  - name: logs
 paths:
   /health:
     get:
@@ -85,7 +86,7 @@ paths:
     post:
       tags: [auth]
       security: []
-      summary: Выход (удаляет cookie)
+      summary: Выход (удаляет cookie; при активной сессии пишется в журнал авторизации)
       responses:
         '204': { description: Сессия завершена }
   /meta:
@@ -296,6 +297,43 @@ paths:
         '204': { description: Удалён }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /logs/auth:
+    get:
+      tags: [logs]
+      summary: Журнал авторизации — входы, неудачные попытки и выходы (только админ)
+      description: |
+        Сначала новые. Неудачный вход пишется с причиной (`wrong_password`, `unknown_login`, `rate_limited` — первый ответ 429
+        за окно LOGIN_RATE_WINDOW_MIN), клиенту при этом всегда приходит одинаковый ответ 401. Пароли, хеши, токены и cookie
+        не записываются. IP берётся с учётом TRUST_PROXY, User-Agent обрезается до 300 символов.
+        Записи старше LOG_RETENTION_DAYS (по умолчанию 180) удаляет бот раз в сутки.
+        `counts` считаются с учётом q, user_id и дат, но без type — для чипов фильтра.
+      parameters:
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 100 }, description: 'Подстрока логина, имени, IP или User-Agent без учёта регистра' }
+        - { name: type, in: query, required: false, schema: { type: string, enum: [all, login_ok, login_fail, logout], default: all } }
+        - { name: user_id, in: query, required: false, schema: { type: string, pattern: '^(\d+|unknown)$' }, description: 'id пользователя или unknown — попытки с несуществующим логином' }
+        - { name: from, in: query, required: false, schema: { type: string, format: date }, description: 'С даты включительно (часовой пояс APP_TIMEZONE)' }
+        - { name: to, in: query, required: false, schema: { type: string, format: date }, description: 'По дату включительно' }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: cursor, in: query, required: false, schema: { type: string }, description: 'next_cursor из предыдущего ответа' }
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { $ref: '#/components/schemas/AuthLogPage' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Invalid' }
+  /logs/{id}:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    get:
+      tags: [logs]
+      summary: Одна запись журнала с полным User-Agent (только админ)
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { $ref: '#/components/schemas/AuthLogEntryFull' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 components:
   securitySchemes:
     cookieAuth: { type: apiKey, in: cookie, name: billpay_session }
@@ -314,6 +352,51 @@ components:
     Invalid: { description: Ошибка валидации, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     EmailTaken: { description: Почта уже указана у другого пользователя, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   schemas:
+    AuthLogUser:
+      type: object
+      nullable: true
+      properties:
+        id: { type: integer }
+        login: { type: string }
+        name: { type: string, nullable: true }
+        role: { type: string, enum: [admin, user], nullable: true }
+        from_env: { type: boolean }
+    AuthLogEntry:
+      type: object
+      required: [id, kind, at, local_at, event, result, login, user, user_deleted, source, ip, device]
+      properties:
+        id: { type: integer }
+        kind: { type: string, enum: [auth] }
+        at: { type: string, format: date-time }
+        local_at: { type: string, example: '2026-10-25T10:41:07', description: 'Время в APP_TIMEZONE' }
+        event: { type: string, enum: [login, logout] }
+        result: { type: string, enum: [ok, fail] }
+        reason: { type: string, nullable: true, enum: [wrong_password, unknown_login, rate_limited] }
+        login: { type: string, nullable: true, description: 'Логин на момент события; для неудачной попытки — введённый логин (до 64 символов)' }
+        user: { $ref: '#/components/schemas/AuthLogUser' }
+        user_deleted: { type: boolean }
+        source: { type: string, enum: [web, api] }
+        ip: { type: string, nullable: true, example: '203.0.113.24' }
+        device: { type: string, nullable: true, example: 'Chrome 141 · macOS' }
+    AuthLogEntryFull:
+      allOf:
+        - $ref: '#/components/schemas/AuthLogEntry'
+        - type: object
+          properties:
+            user_agent: { type: string, nullable: true, maxLength: 300 }
+    AuthLogPage:
+      type: object
+      required: [items, counts, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AuthLogEntry' } }
+        counts:
+          type: object
+          properties:
+            all: { type: integer }
+            login_ok: { type: integer }
+            login_fail: { type: integer }
+            logout: { type: integer }
+        next_cursor: { type: string, nullable: true }
     Error:
       type: object
       properties: { detail: { type: string } }

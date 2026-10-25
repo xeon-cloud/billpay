@@ -26,6 +26,7 @@ const config = {
   cookieSecure: bool(env.COOKIE_SECURE, false),
   trustProxy: env.TRUST_PROXY === undefined || env.TRUST_PROXY === '' ? 1 : (/^\d+$/.test(env.TRUST_PROXY) ? +env.TRUST_PROXY : env.TRUST_PROXY),
   loginRateLimit: { windowMin: +env.LOGIN_RATE_WINDOW_MIN || 15, max: +env.LOGIN_RATE_MAX || 10 },
+  logRetentionDays: /^\d+$/.test(env.LOG_RETENTION_DAYS || '') && +env.LOG_RETENTION_DAYS >= 1 ? Math.min(+env.LOG_RETENTION_DAYS, 3650) : 180,
   admin: {
     login: (env.ADMIN_LOGIN || 'admin').trim().toLowerCase(),
     password: env.ADMIN_PASSWORD || '',

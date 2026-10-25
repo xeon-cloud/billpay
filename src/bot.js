@@ -5,6 +5,7 @@ const { createPayments } = require('./payments');
 const { formatReminder, sendMessage, callApi, payKeyboard } = require('./telegram');
 const { createTransport, sendReminder } = require('./mailer');
 const { sendWebhook, hostOf } = require('./webhook');
+const { purge } = require('./audit');
 
 const LOCK = 727365;
 const INTERVAL_MS = 60 * 1000;
@@ -70,7 +71,6 @@ async function deliver(client, today, channel, recipient, send) {
 let sharedTransport = null;
 const mailTransport = () => (sharedTransport ||= createTransport());
 
-// кнопка в чате
 async function onPaid(payments, q) {
   const token = config.telegramBotToken;
   const answer = (text) => callApi(token, 'answerCallbackQuery', { callback_query_id: q.id, text }).catch(() => {});
@@ -150,6 +150,17 @@ async function dispatch(pool, payments, { transport, webhook = config.webhook } 
   }
 }
 
+async function purgeLogs(pool, days = config.logRetentionDays) {
+  const client = await pool.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock($1)', [LOCK]);
+    return await purge(client, days);
+  } finally {
+    await client.query('SELECT pg_advisory_unlock($1)', [LOCK]).catch(() => {});
+    client.release();
+  }
+}
+
 async function main() {
   const pool = createPool();
   await waitForDb(pool);
@@ -166,12 +177,22 @@ async function main() {
   }
   let timer;
   let busy = false;
+  let purgedOn = null;
   const stop = { done: false };
   if (config.telegramBotToken) listen(payments, stop);
   const warned = { telegram: false, email: false, webhook: false };
   const tick = async () => {
     if (busy) return;
     busy = true;
+    try {
+      if (purgedOn !== D.today()) {
+        const removed = await purgeLogs(pool);
+        purgedOn = D.today();
+        if (removed) console.log(`[billpay] журнал: удалено записей старше ${config.logRetentionDays} дн.: ${removed}`);
+      }
+    } catch (e) {
+      console.error('[billpay] очистка журнала:', e.message);
+    }
     try {
       const res = await dispatch(pool, payments);
       if (res.off.telegram && !warned.telegram) {
@@ -212,4 +233,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { dispatch, dueOccurrences, claim };
+module.exports = { dispatch, dueOccurrences, claim, purgeLogs };

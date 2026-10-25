@@ -32,10 +32,10 @@
   const remWhere = () => `чат «${esc(S.telegramChat)}»${mailOn() ? ' и почта' : ''}`;
   const LOGO = '<img src="/assets/img/logo-128.png" width="28" height="28" alt=""><span class="wm">billpay</span>';
 
-  const NAV = [['payments', '/app', 'card', 'Платежи'], ['calendar', '/app/calendar', 'cal', 'Календарь'], ['users', '/app/admin', 'users', 'Пользователи'], ['settings', '/app/admin#settings', 'sliders', 'Настройки']];
+  const NAV = [['payments', '/app', 'card', 'Платежи'], ['calendar', '/app/calendar', 'cal', 'Календарь'], ['users', '/app/admin', 'users', 'Пользователи'], ['settings', '/app/admin#settings', 'sliders', 'Настройки'], ['logs', '/app/logs', 'list', 'Логи']];
   function shell(active, crumb, actions = '', mobileActions = '') {
     const u = S.currentUser, isAdmin = u.role === 'admin';
-    const nav = NAV.filter((n) => isAdmin || (n[0] !== 'users' && n[0] !== 'settings'));
+    const nav = NAV.filter((n) => isAdmin || !['users', 'settings', 'logs'].includes(n[0]));
     const side = $('#side');
     if (side) side.innerHTML = `<a class="logo" href="/app" aria-label="BillPay">${LOGO}</a>
       <button class="srch" data-cmdk aria-label="Поиск и команды">${ic('search')}<span class="t">Поиск и команды</span><span class="kbd">⌘K</span></button>
@@ -120,7 +120,7 @@
     const base = () => [
       { t: 'Перейти: Платежи', m: 'список', ic: 'card', run: () => (location.href = '/app') },
       { t: 'Перейти: Календарь', m: 'месяц', ic: 'cal', run: () => (location.href = '/app/calendar') },
-      ...(isAdmin ? [{ t: 'Новый регулярный платёж', m: 'админ', ic: 'plus', run: () => (location.href = '/app/admin#new') }, { t: 'Перейти: Пользователи', m: 'админ', ic: 'users', run: () => (location.href = '/app/admin') }] : []),
+      ...(isAdmin ? [{ t: 'Новый регулярный платёж', m: 'админ', ic: 'plus', run: () => (location.href = '/app/admin#new') }, { t: 'Перейти: Пользователи', m: 'админ', ic: 'users', run: () => (location.href = '/app/admin') }, { t: 'Перейти: Логи', m: 'админ', ic: 'list', run: () => (location.href = '/app/logs') }, { t: 'Логи: неудачные входы', m: 'авторизация', ic: 'lock', run: () => (location.href = '/app/logs?type=login_fail') }] : []),
       { t: 'Почта для оповещений', m: 'профиль', ic: 'mail', run: () => openProfile() },
       { t: 'Сменить тему', m: 'тёмная / светлая', ic: 'moon', run: () => toggleTheme() },
       { t: 'Открыть лендинг', m: 'о продукте', ic: 'home', run: () => (location.href = '/') },
@@ -606,6 +606,196 @@
     if (location.hash === '#settings') $('#settings').scrollIntoView();
   }
 
+  async function logs() {
+    shell('logs', 'Администрирование<i></i><b>Логи</b>');
+    palette();
+    $$('#logs [data-ic]').forEach((e) => (e.outerHTML = ic(e.dataset.ic)));
+    $('#today').innerHTML = todayChip();
+    BillPayApi.getOccurrences().then(sideCounts).catch(() => {});
+    const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 10 || h >= 20) ? b : c; };
+    const keep = S.logRetentionDays || 180;
+    $('#lgNote').innerHTML = `${ic('lock')}<span>Только администратор · хранится ${keep} ${plural(keep, 'день', 'дня', 'дней')}</span>`;
+    const TYPES = [['all', 'Все'], ['login_ok', 'Успешные входы'], ['login_fail', 'Неудачные'], ['logout', 'Выходы']];
+    const PERIODS = [['today', 'Сегодня', 0], ['7d', '7 дней', 6], ['30d', '30 дней', 29], ['90d', '90 дней', 89], ['custom', 'Свой период']];
+    const REASON = { wrong_password: 'Неверный пароль', unknown_login: 'Неизвестный логин', rate_limited: 'Слишком много попыток' };
+    const MG = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+    const WD = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+    const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '') && !isNaN(Date.parse(d)) && new Date(d + 'T00:00:00Z').toISOString().slice(0, 10) === d;
+    const addD = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
+    const P = new URLSearchParams(location.search);
+    const F = {
+      q: (P.get('q') || '').slice(0, 100),
+      type: TYPES.some((t) => t[0] === P.get('type')) ? P.get('type') : 'all',
+      user: /^(\d+|unknown)$/.test(P.get('user') || '') ? P.get('user') : '',
+      period: PERIODS.some((t) => t[0] === P.get('period')) ? P.get('period') : '30d',
+      from: isDate(P.get('from')) ? P.get('from') : addD(TODAY, -29),
+      to: isDate(P.get('to')) ? P.get('to') : TODAY
+    };
+    if (F.from > F.to) [F.from, F.to] = [F.to, F.from];
+    const range = () => { if (F.period === 'custom') return { from: F.from, to: F.to }; const p = PERIODS.find((x) => x[0] === F.period); return { from: addD(TODAY, -p[2]), to: TODAY }; };
+    const isDef = () => F.type === 'all' && !F.q.trim() && !F.user && F.period === '30d';
+    let USERS = [];
+    try { USERS = await BillPayApi.getUsers(); } catch (e) {}
+    let PAGE = { items: [], counts: { all: 0, login_ok: 0, login_fail: 0, logout: 0 }, next_cursor: null }, SEQ = 0, DEB = 0, LOADING = false, DN = 0;
+    const params = (cursor) => ({ q: F.q.trim(), type: F.type, user_id: F.user, ...range(), limit: 50, cursor });
+    const writeUrl = () => {
+      const p = new URLSearchParams();
+      if (F.q.trim()) p.set('q', F.q.trim());
+      if (F.type !== 'all') p.set('type', F.type);
+      if (F.user) p.set('user', F.user);
+      if (F.period !== '30d') p.set('period', F.period);
+      if (F.period === 'custom') { p.set('from', F.from); p.set('to', F.to); }
+      const s = p.toString(); history.replaceState(null, '', location.pathname + (s ? '?' + s : ''));
+    };
+    const userName = () => F.user === 'unknown' ? 'неизвестный логин' : F.user ? ((USERS.find((u) => String(u.id) === F.user) || {}).login || '#' + F.user) : 'все';
+    const periodName = () => F.period === 'custom' ? `${dm(F.from)}–${dm(F.to)}` : PERIODS.find((x) => x[0] === F.period)[1];
+    const userOpts = () => [['', 'Все пользователи', ''], ...USERS.map((u) => [String(u.id), u.login, u.from_env ? 'главный администратор' : u.name]), ['unknown', 'Неизвестный логин', 'попытки с несуществующим логином']];
+    const dates = () => { const n = ++DN; return `<div class="f2 pdr"><div class="f"><label for="pdFrom${n}">С</label><input class="inp" id="pdFrom${n}" type="date" max="${TODAY}" value="${range().from}" data-from></div><div class="f"><label for="pdTo${n}">По</label><input class="inp" id="pdTo${n}" type="date" max="${TODAY}" value="${range().to}" data-to></div></div>`; };
+
+    const controls = () => {
+      const c = PAGE.counts;
+      const open = $$('#fgroup .dd.open').map((d) => d.dataset.k);
+      $('#fgroup').innerHTML = `<div class="dd ${open.includes('user') ? 'open' : ''}" data-k="user"><button class="fbtn ${F.user ? 'set' : ''}" type="button" data-dd aria-haspopup="true" aria-expanded="${open.includes('user')}">${ic('user')}<span class="fl">Пользователь</span><span class="fv">${esc(userName())}</span>${ic('down')}</button>
+          <div class="pop" role="menu"><div class="lbl pop-h">Пользователь</div>${userOpts().map(([k, l, s]) => `<button type="button" class="opt ${F.user === k ? 'on' : ''}" data-user="${k}" role="menuitemradio" aria-checked="${F.user === k}"><span class="rb2"></span><span class="ot">${esc(l)}${s ? `<small>${esc(s)}</small>` : ''}</span></button>`).join('')}</div></div>
+        <div class="dd ${open.includes('period') ? 'open' : ''}" data-k="period"><button class="fbtn ${F.period !== '30d' ? 'set' : ''}" type="button" data-dd aria-haspopup="true" aria-expanded="${open.includes('period')}">${ic('cal')}<span class="fl">Период</span><span class="fv">${periodName()}</span>${ic('down')}</button>
+          <div class="pop pop-r" role="menu"><div class="lbl pop-h">Период</div>${PERIODS.map(([k, l]) => `<button type="button" class="opt ${F.period === k ? 'on' : ''}" data-period="${k}" role="menuitemradio" aria-checked="${F.period === k}"><span class="rb2"></span><span class="ot">${l}</span></button>`).join('')}${dates()}
+          <p class="pop-n">Время — ${esc(S.timezone || 'Europe/Moscow')}. Записи старше ${keep} ${plural(keep, 'дня', 'дней', 'дней')} удаляются автоматически.</p></div></div>`;
+      $('#chips').innerHTML = TYPES.map(([k, l]) => `<button class="chip ${F.type === k ? 'on' : ''}" type="button" data-type="${k}" aria-pressed="${F.type === k}">${l}<em>${c[k]}</em></button>`).join('');
+      const inp = $('#lq'); if (document.activeElement !== inp && inp.value !== F.q) inp.value = F.q;
+      $('#lqclear').hidden = !F.q; $('#psearch').classList.toggle('has', !!F.q);
+      $('#resetL').hidden = isDef();
+      const nf = (F.type !== 'all' ? 1 : 0) + (F.user ? 1 : 0) + (F.period !== '30d' ? 1 : 0);
+      $('#fcount').hidden = !nf; $('#fcount').textContent = nf;
+      sheet();
+    };
+    const dayTitle = (d) => {
+      const diff = Math.round((Date.parse(TODAY) - Date.parse(d)) / 864e5), long = `${+d.slice(8)} ${MG[+d.slice(5, 7) - 1]}`;
+      return diff === 0 ? ['Сегодня', long] : diff === 1 ? ['Вчера', long] : [long, WD[new Date(d + 'T12:00:00Z').getUTCDay()] + (d.slice(0, 4) !== TODAY.slice(0, 4) ? ' · ' + d.slice(0, 4) : '')];
+    };
+    const who = (e, cls = '') => {
+      if (e.user) return `<span class="who ${cls}"><span class="ava ${e.user.from_env ? '' : 'n'}">${initials(e.user.name || e.user.login)}</span><span class="t"><b>${esc(e.user.login)}</b><small>${e.user.from_env ? 'главный администратор' : esc(e.user.name)}</small></span></span>`;
+      if (e.user_deleted) return `<span class="who ${cls}"><span class="ava n">${initials(e.login || '?')}</span><span class="t"><b>${esc(e.login)}</b><small>пользователь удалён</small></span></span>`;
+      return `<span class="who ${cls}"><span class="ava n q">?</span><span class="t"><b>${esc(e.login || '—')}</b><small>нет такого логина</small></span></span>`;
+    };
+    const pill = (e) => e.event === 'logout' ? '<span class="pill out"><i></i>Выход</span>' : e.result === 'ok' ? '<span class="pill paid"><i></i>Вход выполнен</span>' : '<span class="pill overdue"><i></i>Отказ</span>';
+    const row = (e, i, anim) => `<div class="lgx la rw ${anim ? 'rise' : ''}" style="--d:${Math.min(i, 12) * 22}ms" data-open="${e.id}" tabindex="0" role="button" aria-label="Открыть запись">
+      <span class="tm">${e.local_at.slice(11, 16)}<small>:${e.local_at.slice(17, 19)}</small></span>${who(e)}<span class="lev">${pill(e)}${e.reason ? `<small>${REASON[e.reason] || ''}</small>` : ''}</span><span class="ip">${esc(e.ip || '—')}</span><span class="dev">${esc(e.device || '—')}</span><span class="go">${ic('chev')}</span></div>`;
+    const rows = (anim = true, from = 0) => {
+      const box = $('#logs'), list = PAGE.items, total = PAGE.counts[F.type];
+      box.classList.toggle('is-empty', !list.length);
+      box.classList.toggle('no-data', !PAGE.counts.all && isDef());
+      if (!list.length) {
+        $('#rows').innerHTML = !PAGE.counts.all && isDef()
+          ? emptyCta('shield', 'Записей пока нет', `Здесь появятся входы и выходы пользователей за последние 30 дней: время, IP-адрес, устройство и причина отказа. Записи хранятся ${keep} ${plural(keep, 'день', 'дня', 'дней')}.`)
+          : emptyCta('search', 'Ничего не найдено', `${F.q.trim() ? `По запросу «${esc(F.q.trim())}»` : 'По выбранным фильтрам'} за период «${periodName().toLowerCase()}» записей нет. Измените запрос, период или сбросьте фильтры.`, `<button class="btn" type="button" data-reset>${ic('undo')}Сбросить фильтры</button>`);
+        $('#foot').innerHTML = '';
+        return;
+      }
+      let html = '', last = '';
+      list.forEach((e, i) => {
+        const d = e.local_at.slice(0, 10);
+        if (d !== last) { const [a, b] = dayTitle(d); html += `<div class="grp lgg"><b>${a}</b><span>${b}</span></div>`; last = d; }
+        html += row(e, i - from, anim && i >= from);
+      });
+      $('#rows').innerHTML = html;
+      $('#foot').innerHTML = `<span class="cnt2"><b>${list.length}</b> из ${total} · сначала новые</span>${PAGE.next_cursor ? `<button class="btn ghost" type="button" data-more>${ic('down')}Показать ещё 50</button>` : '<span class="mut2 end">Это все записи</span>'}`;
+    };
+    function sheet() {
+      const c = PAGE.counts;
+      $('#shBody').innerHTML = `<div class="sh-s"><div class="lbl">Тип события</div><div class="sh-chips">${TYPES.map(([k, l]) => `<button type="button" class="chip ${F.type === k ? 'on' : ''}" data-type="${k}" aria-pressed="${F.type === k}">${l}<em>${c[k]}</em></button>`).join('')}</div></div>
+        <div class="sh-s"><div class="lbl">Пользователь</div><div class="sh-chips">${userOpts().map(([k, l]) => `<button type="button" class="chip ${F.user === k ? 'on' : ''}" data-user="${k}" aria-pressed="${F.user === k}">${esc(k === '' ? 'Все' : l)}</button>`).join('')}</div></div>
+        <div class="sh-s"><div class="lbl">Период</div><div class="sh-chips">${PERIODS.map(([k, l]) => `<button type="button" class="chip ${F.period === k ? 'on' : ''}" data-period="${k}" aria-pressed="${F.period === k}">${l}</button>`).join('')}</div>${dates()}</div>`;
+      const n = c[F.type]; $('#shApply').textContent = n ? `Показать ${n} ${plural(n, 'запись', 'записи', 'записей')}` : 'Ничего не найдено';
+    }
+    async function load() {
+      const my = ++SEQ;
+      let p; try { p = await BillPayApi.getAuthLogs(params()); } catch (e) { toast(esc(e.message)); return; }
+      if (my !== SEQ) return;
+      PAGE = p; controls(); rows(true);
+    }
+    async function more(btn) {
+      if (LOADING || !PAGE.next_cursor) return;
+      LOADING = true; btn.disabled = true;
+      const my = SEQ, from = PAGE.items.length;
+      try {
+        const p = await BillPayApi.getAuthLogs(params(PAGE.next_cursor));
+        if (my !== SEQ) return;
+        PAGE = { ...p, items: [...PAGE.items, ...p.items] }; rows(true, from);
+      } catch (e) { toast(esc(e.message)); btn.disabled = false; } finally { LOADING = false; }
+    }
+    const apply = () => { clearTimeout(DEB); writeUrl(); controls(); load(); };
+    const resetAll = () => { Object.assign(F, { q: '', type: 'all', user: '', period: '30d' }); $('#lq').value = ''; apply(); };
+
+    const dl = $('#detail'), box = $('#detailBox');
+    const closeDetail = () => { dl.classList.remove('on'); dl.setAttribute('aria-hidden', 'true'); };
+    async function detail(id) {
+      let e; try { e = await BillPayApi.getLog(id); } catch (x) { toast(esc(x.message)); return; }
+      const title = e.event === 'logout' ? 'Выход из системы' : e.result === 'ok' ? 'Успешный вход' : 'Неудачный вход';
+      const icn = e.event === 'logout' ? 'logout' : e.result === 'ok' ? 'shield' : 'lock';
+      const kv = (k, v) => `<div class="dk"><span>${k}</span><div>${v}</div></div>`;
+      const role = e.user ? `<span class="role ${e.user.role === 'admin' ? 'admin' : ''}">${e.user.role === 'admin' ? 'Администратор' : 'Пользователь'}</span>` : '';
+      const target = e.user ? e.user.login : e.login || '';
+      box.innerHTML = `<div class="grab"></div><div class="sh-h dh"><span class="dic">${ic(icn)}</span><div class="dt2"><b>${title}</b><small>#${e.id} · ${dmy(e.local_at.slice(0, 10))}, ${e.local_at.slice(11, 19)} · ${esc(S.timezone || 'Europe/Moscow')}</small></div><button class="ibtn sm" type="button" data-dclose aria-label="Закрыть">${ic('x')}</button></div>
+        <div class="sh-b"><div class="pf-who">${who(e, 'lgw')}${role}</div>
+          <div class="dl">${kv('Результат', `${pill(e)}${e.reason ? `<small class="rs">${REASON[e.reason] || ''}${e.reason === 'rate_limited' ? ' · ответ 429, вход с этого IP временно заблокирован' : ''}</small>` : ''}`)}
+            ${e.result === 'fail' ? kv('Введённый логин', `<code>${esc(e.login || '—')}</code>`) : ''}
+            ${kv('Источник', e.source === 'api' ? 'API (Bearer-токен)' : 'Веб-интерфейс')}
+            ${kv('IP-адрес', `<code>${esc(e.ip || '—')}</code>`)}${kv('Устройство', esc(e.device || '—'))}${kv('User-Agent', `<code class="ua">${esc(e.user_agent || '—')}</code>`)}</div>
+          ${e.result === 'fail' ? `<div class="hint">${ic('info')}<span>Введённый пароль не сохраняется — ни открытым текстом, ни хешем. Пользователь видит только общее «Неверный логин или пароль».</span></div>` : ''}</div>
+        <div class="sh-f pfs-f">${target ? `<button class="btn ghost lg" type="button" data-all="${e.id}">${ic('filter')}<span class="tx">Все события ${esc(target)}</span></button>` : ''}<button class="btn lg" type="button" data-dclose>Закрыть</button></div>`;
+      box.dataset.user = e.user ? String(e.user.id) : '';
+      box.dataset.login = e.login || '';
+      box.dataset.unknown = !e.user && !e.user_deleted ? '1' : '';
+      dl.classList.add('on'); dl.setAttribute('aria-hidden', 'false');
+    }
+
+    const sh = $('#sheet');
+    const closeSheet = () => { sh.classList.remove('on'); sh.setAttribute('aria-hidden', 'true'); };
+    const closeDd = () => $$('#fgroup .dd.open').forEach((d) => { d.classList.remove('open'); $('[data-dd]', d).setAttribute('aria-expanded', 'false'); });
+    const onFilter = (t) => {
+      const ty = t.closest('[data-type]'); if (ty) { F.type = ty.dataset.type; apply(); return true; }
+      const u = t.closest('[data-user]'); if (u) { F.user = u.dataset.user; closeDd(); apply(); return true; }
+      const p = t.closest('[data-period]'); if (p) { F.period = p.dataset.period; if (F.period !== 'custom') closeDd(); apply(); return true; }
+      if (t.closest('[data-reset]')) { closeDd(); resetAll(); return true; }
+      return false;
+    };
+    document.addEventListener('click', (e) => {
+      const t = e.target;
+      const dd = t.closest('#fgroup [data-dd]');
+      if (dd) { const b = dd.parentElement, was = b.classList.contains('open'); closeDd(); b.classList.toggle('open', !was); dd.setAttribute('aria-expanded', !was); return; }
+      if (!t.closest('#fgroup .pop')) closeDd();
+      if (t.closest('[data-sheet]')) { sh.classList.add('on'); sh.setAttribute('aria-hidden', 'false'); return; }
+      if (t.closest('[data-close-sheet]') || t === sh) { closeSheet(); return; }
+      if (t.closest('[data-dclose]') || t === dl) { closeDetail(); return; }
+      if (t.closest('[data-all]')) {
+        Object.assign(F, { type: 'all', user: box.dataset.user || (box.dataset.unknown ? 'unknown' : ''), q: box.dataset.user ? '' : box.dataset.login });
+        closeDetail(); apply(); return;
+      }
+      if (t.closest('#logs, #sheet') && onFilter(t)) return;
+      const m = t.closest('[data-more]'); if (m) { more(m); return; }
+      const o = t.closest('[data-open]'); if (o) detail(+o.dataset.open);
+    });
+    document.addEventListener('change', (e) => {
+      const fr = e.target.closest('[data-from]'), to = e.target.closest('[data-to]');
+      if (!fr && !to) return;
+      const r = range(), v = e.target.value; if (!isDate(v)) return;
+      F.period = 'custom'; F.from = fr ? v : r.from; F.to = to ? v : r.to;
+      if (F.from > F.to) { F.from = v; F.to = v; }
+      apply();
+    });
+    $('#rows').addEventListener('keydown', (e) => { const o = e.target.closest('[data-open]'); if (o && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); detail(+o.dataset.open); } });
+    $('#lq').addEventListener('input', (e) => { F.q = e.target.value.slice(0, 100); $('#lqclear').hidden = !F.q; $('#psearch').classList.toggle('has', !!F.q); clearTimeout(DEB); DEB = setTimeout(apply, 250); });
+    $('#lqclear').addEventListener('click', () => { F.q = ''; $('#lq').value = ''; apply(); $('#lq').focus(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || $('#ov').classList.contains('on')) return;
+      if (dl.classList.contains('on')) { closeDetail(); return; }
+      if (document.activeElement === $('#lq') && F.q) { F.q = ''; $('#lq').value = ''; apply(); return; }
+      closeDd(); closeSheet();
+    });
+    const bar = $('#bar'); addEventListener('scroll', () => bar.classList.toggle('stuck', innerWidth <= 900 && bar.getBoundingClientRect().top <= 61), { passive: true });
+    writeUrl(); controls(); await load();
+  }
+
   function login() {
     $$('[data-tt-slot]').forEach((s) => (s.outerHTML = TT()));
     const f = $('#loginForm'), err = $('#err'), pw = $('[name=password]', f), tg = $('#pwToggle');
@@ -619,6 +809,6 @@
   }
 
   window.BillPay = { status, late, fmt, num, dmy, toast, setTheme, toggleTheme, TODAY };
-  const run = () => ({ dashboard, calendar, admin, login }[document.body.dataset.page] || (() => {}))();
+  const run = () => ({ dashboard, calendar, admin, logs, login }[document.body.dataset.page] || (() => {}))();
   document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', run) : run();
 })();

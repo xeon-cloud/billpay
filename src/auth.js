@@ -39,14 +39,31 @@ function createAuth(pool) {
     return [envAdmin(await envAdminEmail()), ...rows.map(publicUser)];
   }
 
-  async function verify(login, password) {
-    if (typeof login !== 'string' || typeof password !== 'string' || !login || !password) return null;
+  async function check(login, password) {
+    if (typeof login !== 'string' || !login.trim()) return { user: null, reason: 'unknown_login', known: null };
     login = login.trim().toLowerCase();
-    if (login === config.admin.login) return (await bcrypt.compare(password, adminHash)) ? envAdmin(await envAdminEmail()) : null;
+    const pass = typeof password === 'string' ? password : '';
+    if (login === config.admin.login) {
+      const admin = envAdmin(await envAdminEmail());
+      const ok = !!pass && (await bcrypt.compare(pass, adminHash));
+      return ok ? { user: admin, reason: null, known: admin } : { user: null, reason: 'wrong_password', known: admin };
+    }
     const { rows } = await pool.query(`SELECT ${USER_COLS} FROM users WHERE lower(login) = $1 AND id <> $2`, [login, ENV_ADMIN_ID]);
     const u = rows[0];
-    const ok = await bcrypt.compare(password, u ? u.password_hash : adminHash.replace(/.$/, '.'));
-    return u && ok ? publicUser(u) : null;
+    const ok = await bcrypt.compare(pass || ' ', u ? u.password_hash : adminHash.replace(/.$/, '.'));
+    if (!u) return { user: null, reason: 'unknown_login', known: null };
+    return ok && pass ? { user: publicUser(u), reason: null, known: publicUser(u) } : { user: null, reason: 'wrong_password', known: publicUser(u) };
+  }
+  async function verify(login, password) {
+    if (typeof login !== 'string' || typeof password !== 'string' || !login || !password) return null;
+    return (await check(login, password)).user;
+  }
+  async function findByLogin(login) {
+    if (typeof login !== 'string' || !login.trim()) return null;
+    login = login.trim().toLowerCase();
+    if (login === config.admin.login) return envAdmin(await envAdminEmail());
+    const { rows } = await pool.query(`SELECT ${USER_COLS} FROM users WHERE lower(login) = $1 AND id <> $2`, [login, ENV_ADMIN_ID]);
+    return rows[0] ? publicUser(rows[0]) : null;
   }
 
   const sign = (user) => jwt.sign({ sub: user.id, role: user.role }, config.sessionSecret, { expiresIn: config.sessionTtlHours * 3600 });
@@ -74,7 +91,7 @@ function createAuth(pool) {
     next();
   };
 
-  return { ENV_ADMIN_ID, envAdmin, publicUser, findById, allUsers, verify, sign, setCookie, clearCookie, attach, requireAuth, requireAdmin };
+  return { ENV_ADMIN_ID, envAdmin, publicUser, findById, findByLogin, allUsers, check, verify, sign, setCookie, clearCookie, attach, requireAuth, requireAdmin };
 }
 
 module.exports = { createAuth, upsertEnvAdmin, COOKIE, ENV_ADMIN_ID };

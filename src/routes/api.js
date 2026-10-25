@@ -4,8 +4,9 @@ const config = require('../config');
 const D = require('../dates');
 const { parseEmail } = require('../mailer');
 const { hostOf } = require('../webhook');
+const { parseAuthQuery } = require('../audit');
 
-module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
+module.exports = function apiRouter({ pool, auth, payments, loginLimiter, audit }) {
   const r = express.Router();
   const { requireAuth, requireAdmin } = auth;
   const bad = (res, detail, code = 400) => res.status(code).json({ detail });
@@ -25,13 +26,21 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
 
   r.post('/auth/login', loginLimiter, async (req, res) => {
     const { login, password } = req.body || {};
-    const user = await auth.verify(login, password);
-    if (!user) return bad(res, 'Неверный логин или пароль', 401);
+    const { user, reason, known } = await auth.check(login, password);
+    if (!user) {
+      await audit.auth(req, { event: 'login', ok: false, reason, user: known, login });
+      return bad(res, 'Неверный логин или пароль', 401);
+    }
+    await audit.auth(req, { event: 'login', ok: true, user });
     const token = auth.sign(user);
     auth.setCookie(res, token);
     res.json({ user, access_token: token, token_type: 'bearer' });
   });
-  r.post('/auth/logout', (_req, res) => { auth.clearCookie(res); res.status(204).end(); });
+  r.post('/auth/logout', async (req, res) => {
+    if (req.user) await audit.auth(req, { event: 'logout', ok: true, user: req.user });
+    auth.clearCookie(res);
+    res.status(204).end();
+  });
   r.get('/auth/me', requireAuth, (req, res) => res.json(req.user));
   r.patch('/auth/me', requireAuth, async (req, res) => {
     const b = req.body || {};
@@ -227,6 +236,19 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter }) {
     const { rowCount } = Number.isSafeInteger(id) ? await pool.query('DELETE FROM users WHERE id = $1 AND NOT is_env_admin', [id]) : { rowCount: 0 };
     if (!rowCount) return bad(res, 'Пользователь не найден', 404);
     res.status(204).end();
+  });
+
+  r.get('/logs/auth', requireAdmin, async (req, res) => {
+    const f = parseAuthQuery(req.query);
+    if (f.err.length) return bad(res, f.err.join('; '), 422);
+    res.json(await audit.listAuth(f));
+  });
+
+  r.get('/logs/:id', requireAdmin, async (req, res) => {
+    const id = idParam(req);
+    const entry = Number.isSafeInteger(id) ? await audit.get(id) : null;
+    if (!entry) return bad(res, 'Запись не найдена', 404);
+    res.json(entry);
   });
 
   r.use((_req, res) => bad(res, 'Не найдено', 404));
