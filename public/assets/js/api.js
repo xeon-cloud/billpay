@@ -62,6 +62,16 @@
     getAuthLogs: (params = {}) => BillPayApi.getLogs('auth', params),
     getActionLogs: (params = {}) => BillPayApi.getLogs('actions', params),
     getLog: (id) => request('/logs/' + id),
+    putReceiptFile: async (id, file) => {
+      const res = await fetch(BASE + '/payment-occurrences/' + id + '/receipt', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) }, body: file });
+      if (res.status === 401) { location.href = '/login?next=' + encodeURIComponent(location.pathname); throw new Error('Требуется вход'); }
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error((data && data.detail) || res.statusText);
+      return data;
+    },
+    putReceiptLink: (id, url) => request('/payment-occurrences/' + id + '/receipt', { method: 'PUT', body: { url } }),
+    deleteReceipt: (id) => request('/payment-occurrences/' + id + '/receipt', { method: 'DELETE' }),
+    receiptFileUrl: (id) => BASE + '/payment-occurrences/' + id + '/receipt/file',
 
     getMeta: (month = MONTH()) => request('/meta?month=' + month),
     month: MONTH

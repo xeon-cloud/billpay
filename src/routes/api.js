@@ -6,8 +6,9 @@ const { parseEmail } = require('../mailer');
 const { hostOf } = require('../webhook');
 const { tx } = require('../db');
 const { parseAuthQuery, parseActionsQuery, events: E } = require('../audit');
+const R = require('../receipts');
 
-module.exports = function apiRouter({ pool, auth, payments, loginLimiter, audit }) {
+module.exports = function apiRouter({ pool, auth, payments, loginLimiter, audit, receipts = R.createReceipts(pool) }) {
   const r = express.Router();
   const { requireAuth, requireAdmin } = auth;
   const bad = (res, detail, code = 400) => res.status(code).json({ detail });
@@ -160,6 +161,77 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter, audit 
     if (isPaid && b.paid_at != null && !D.isDate(b.paid_at)) return bad(res, 'paid_at: дата YYYY-MM-DD', 422);
     if (isPaid && b.paid_at && b.paid_at > D.today()) return bad(res, 'paid_at не может быть в будущем', 422);
     res.json(await payments.setPaid(o, isPaid, isPaid ? b.paid_at : null, req.user.id, audit.action(req)));
+  });
+
+  const occurrenceOf = async (req, res, next) => {
+    const id = idParam(req);
+    const o = Number.isSafeInteger(id) ? await payments.getOccurrence(id) : null;
+    if (!o) return bad(res, 'Период не найден', 404);
+    req.occurrence = o;
+    next();
+  };
+  const rawReceipt = express.raw({ type: R.MIMES, limit: R.MAX_SIZE });
+  const receiptBody = (req, res, next) => {
+    if (!req.occurrence.paid_at) return bad(res, 'Сначала отметьте оплату: чек прикрепляется к оплаченному периоду', 409);
+    if (req.is('application/json')) return next();
+    if (!req.is(R.MIMES)) return bad(res, 'Прикрепите PDF, JPG или PNG либо ссылку (application/json)', 415);
+    rawReceipt(req, res, (e) => {
+      if (!e) return next();
+      if (e.type === 'entity.too.large') { res.set('Connection', 'close'); return bad(res, 'Файл больше 10 МБ', 413); }
+      next(e);
+    });
+  };
+  const RECEIPT_404 = 'Чек не прикреплён';
+
+  r.put('/payment-occurrences/:id/receipt', requireAuth, occurrenceOf, receiptBody, async (req, res) => {
+    let input;
+    if (req.is('application/json')) {
+      const b = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+      const extra = Object.keys(b).filter((k) => k !== 'url');
+      if (extra.length) return bad(res, 'Передайте только url', 422);
+      const err = R.checkUrl(b.url);
+      if (err) return bad(res, err, 422);
+      input = { kind: 'link', url: new URL(b.url.trim()).href };
+      if (input.url.length > R.URL_MAX) return bad(res, `url: не длиннее ${R.URL_MAX} символов`, 422);
+    } else {
+      const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      if (!data.length) return bad(res, 'Пустой файл', 422);
+      const t = R.sniff(data);
+      if (!t) return bad(res, 'Содержимое файла не похоже на PDF, JPG или PNG', 415);
+      const name = R.safeName(req.get('x-filename'), t.ext);
+      if (!name) return bad(res, 'X-Filename: имя файла в percent-encoding (UTF-8)', 422);
+      input = { kind: 'file', name, mime: t.mime, data };
+    }
+    const out = await receipts.put(req.occurrence, input, req.user, audit.action(req));
+    res.status(out.created ? 201 : 200).json(out.receipt);
+  });
+
+  r.get('/payment-occurrences/:id/receipt', requireAuth, occurrenceOf, async (req, res) => {
+    const x = await receipts.get(req.occurrence.id);
+    if (!x) return bad(res, RECEIPT_404, 404);
+    res.set('Cache-Control', 'no-store').json(x);
+  });
+
+  r.get('/payment-occurrences/:id/receipt/file', requireAuth, occurrenceOf, async (req, res) => {
+    const f = await receipts.file(req.occurrence.id);
+    if (!f) return bad(res, RECEIPT_404, 404);
+    if (f.kind !== 'file') return bad(res, 'Прикреплена ссылка, файла нет', 404);
+    const ext = R.sniff(f.data);
+    res.set({
+      'Content-Type': f.mime,
+      'Content-Length': String(f.data.length),
+      'Content-Disposition': `inline; filename="receipt.${ext ? ext.ext : 'bin'}"; filename*=UTF-8''${encodeURIComponent(f.filename)}`,
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, no-store',
+      'Cross-Origin-Resource-Policy': 'same-origin',
+      'Content-Security-Policy': f.mime === 'application/pdf' ? "default-src 'none'" : "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox"
+    });
+    res.end(f.data);
+  });
+
+  r.delete('/payment-occurrences/:id/receipt', requireAuth, occurrenceOf, async (req, res) => {
+    if (!(await receipts.remove(req.occurrence, audit.action(req)))) return bad(res, RECEIPT_404, 404);
+    res.status(204).end();
   });
 
   r.get('/payments/summary', requireAuth, async (req, res) => {

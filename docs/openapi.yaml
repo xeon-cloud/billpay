@@ -216,6 +216,72 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/Invalid' }
+  /payment-occurrences/{id}/receipt:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    put:
+      tags: [payment-occurrences]
+      summary: Прикрепить или заменить чек либо ссылку (admin и user)
+      description: |
+        Одно вложение на период: файл или ссылка, новое заменяет прежнее. Только для периода с отметкой «Оплачено».
+        Файл — сырые байты в теле с Content-Type application/pdf, image/jpeg или image/png, до 10 МБ;
+        тип проверяется по содержимому, имя — в заголовке X-Filename (percent-encoding UTF-8).
+        Ссылка — JSON `{"url": "https://..."}`, только http/https, до 2000 символов, без логина и пароля.
+        При снятии отметки «Оплачено» вложение сохраняется и снова видно после повторной отметки.
+      parameters:
+        - { name: X-Filename, in: header, required: false, schema: { type: string, example: '%D0%A7%D0%B5%D0%BA.pdf' }, description: 'Имя файла в percent-encoding; по умолчанию «чек»' }
+      requestBody:
+        required: true
+        content:
+          application/pdf: { schema: { type: string, format: binary, maxLength: 10485760 } }
+          image/jpeg: { schema: { type: string, format: binary, maxLength: 10485760 } }
+          image/png: { schema: { type: string, format: binary, maxLength: 10485760 } }
+          application/json: { schema: { $ref: '#/components/schemas/ReceiptLink' } }
+      responses:
+        '200':
+          description: Заменено
+          content: { application/json: { schema: { $ref: '#/components/schemas/Receipt' } } }
+        '201':
+          description: Прикреплено
+          content: { application/json: { schema: { $ref: '#/components/schemas/Receipt' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NotPaid' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/Unsupported' }
+        '422': { $ref: '#/components/responses/Invalid' }
+    get:
+      tags: [payment-occurrences]
+      summary: Метаданные чека или ссылки (admin и user)
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { $ref: '#/components/schemas/Receipt' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [payment-occurrences]
+      summary: Удалить чек или ссылку (admin и user)
+      responses:
+        '204': { description: Удалено }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /payment-occurrences/{id}/receipt/file:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    get:
+      tags: [payment-occurrences]
+      summary: Файл чека (admin и user)
+      description: |
+        Только после входа, публичного пути нет. Content-Type — по содержимому файла, Content-Disposition inline с именем
+        в filename*, X-Content-Type-Options nosniff, Cache-Control private, no-store; для картинок — CSP sandbox.
+      responses:
+        '200':
+          description: Файл
+          content:
+            application/pdf: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /payments/summary:
     get:
       tags: [payments]
@@ -329,6 +395,7 @@ paths:
       description: |
         Сначала новые. Пишутся: payment.created / payment.updated / payment.deleted, occurrence.paid / occurrence.unpaid /
         occurrence.paid_at (в том числе кнопка «Оплачено» в Telegram — source telegram, source_ref и telegram — аккаунт и чат),
+        occurrence.receipt_added / occurrence.receipt_replaced / occurrence.receipt_removed (чек или ссылка, поле receipt),
         user.created / user.updated / user.deleted и profile.email (пользователь сменил свою почту через PATCH /auth/me).
         `changes` — поля «было → стало» в читаемом виде; изменение без разницы не пишется. Пароль не записывается —
         только факт «задан» / «изменён». Логин и имя автора, название объекта сохраняются снимком и остаются после удаления.
@@ -382,6 +449,9 @@ components:
     Forbidden: { description: Недостаточно прав, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     NotFound: { description: Не найдено, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     Invalid: { description: Ошибка валидации, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    NotPaid: { description: Период не отмечен «Оплачено», content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    TooLarge: { description: Файл больше 10 МБ, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Unsupported: { description: 'Не PDF, JPG или PNG (по Content-Type или по содержимому)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     EmailTaken: { description: Почта уже указана у другого пользователя, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   schemas:
     AuthLogUser:
@@ -433,7 +503,7 @@ components:
       type: object
       required: [field, before, after]
       properties:
-        field: { type: string, enum: [name, amount, currency, day, next_date, active, paid_at, login, email, password, user] }
+        field: { type: string, enum: [name, amount, currency, day, next_date, active, paid_at, receipt, login, email, password, user] }
         before: { type: string, nullable: true, example: '185 000 ₽' }
         after: { type: string, nullable: true, example: '195 000 ₽' }
     ActionLogEntry:
@@ -444,7 +514,7 @@ components:
         kind: { type: string, enum: [action] }
         at: { type: string, format: date-time }
         local_at: { type: string, example: '2026-10-25T10:43:05', description: 'Время в APP_TIMEZONE' }
-        event: { type: string, enum: [payment.created, payment.updated, payment.deleted, occurrence.paid, occurrence.unpaid, occurrence.paid_at, user.created, user.updated, user.deleted, profile.email] }
+        event: { type: string, enum: [payment.created, payment.updated, payment.deleted, occurrence.paid, occurrence.unpaid, occurrence.paid_at, occurrence.receipt_added, occurrence.receipt_replaced, occurrence.receipt_removed, user.created, user.updated, user.deleted, profile.email] }
         result: { type: string, enum: [ok] }
         reason: { type: string, nullable: true }
         login: { type: string, nullable: true, description: 'Логин автора на момент действия; null для Telegram' }
@@ -573,6 +643,33 @@ components:
         is_paid: { type: boolean }
         status: { type: string, enum: [paid, unpaid, overdue], description: 'overdue: со следующего дня после due_date' }
         overdue_days: { type: integer, description: Дней просрочки (для оплаченных — на дату оплаты) }
+        receipt:
+          nullable: true
+          description: 'Прикреплённый чек или ссылка (только метаданные, без содержимого файла). Сохраняется при снятии отметки «Оплачено».'
+          allOf: [ { $ref: '#/components/schemas/Receipt' } ]
+    Receipt:
+      type: object
+      required: [kind, added_at, added_by]
+      properties:
+        kind: { type: string, enum: [file, link] }
+        name: { type: string, description: 'Только для file: безопасное имя, расширение по реальному типу', example: 'Счёт аренда октябрь 2026.pdf' }
+        mime: { type: string, enum: [application/pdf, image/jpeg, image/png], description: Только для file }
+        size: { type: integer, maximum: 10485760, description: 'Только для file: байты' }
+        url: { type: string, maxLength: 2000, description: 'Только для link: http или https', example: 'https://lk.example.com/payments/2026-10' }
+        host: { type: string, description: Только для link, example: lk.example.com }
+        added_at: { type: string, format: date-time }
+        added_by:
+          type: object
+          nullable: true
+          properties:
+            login: { type: string }
+            name: { type: string, nullable: true }
+    ReceiptLink:
+      type: object
+      required: [url]
+      additionalProperties: false
+      properties:
+        url: { type: string, maxLength: 2000, example: 'https://lk.example.com/payments/2026-10' }
     OccurrencePatch:
       type: object
       properties:

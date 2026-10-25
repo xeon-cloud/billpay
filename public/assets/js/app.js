@@ -159,6 +159,122 @@
   const sideCounts = (occ) => ['RUB', 'USD', 'EUR'].forEach((c) => $$(`[data-count="${c}"]`).forEach((n) => (n.textContent = occ.filter((o) => o.currency === c).length)));
   const todayChip = () => `${ic('cal')}сегодня ${dmy(TODAY)}`;
 
+  const RC_TYPES = { 'application/pdf': 'PDF', 'image/jpeg': 'JPG', 'image/png': 'PNG' };
+  const RC_MAX = 10 * 1024 * 1024;
+  const kb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1).replace('.', ',') + '\u00a0МБ' : Math.max(1, Math.round(n / 1024)) + '\u00a0КБ');
+  const extOf = (n) => ((/\.([a-z0-9]{1,6})$/i.exec(n || '') || [])[1] || '').toLowerCase();
+  const checkUrl = (v) => {
+    let u; try { u = new URL(v); } catch (e) { return 'Нужна полная ссылка вида https://…'; }
+    if (!/^https?:$/.test(u.protocol)) return `Ссылка «${u.protocol.replace(':', '')}:» не подходит — только http:// или https://`;
+    if (u.username || u.password) return 'Ссылка не должна содержать логин или пароль';
+    if (v.length > 2000) return 'Ссылка длиннее 2000 символов';
+    return '';
+  };
+  const checkFile = (f) => (!RC_TYPES[f.type] ? `Формат ${extOf(f.name) ? '.' + extOf(f.name) : 'файла'} не подходит. Прикрепите PDF, JPG или PNG.` : f.size > RC_MAX ? `Файл ${kb(f.size)} — больше 10\u00a0МБ. Сожмите фото или сохраните чек в PDF.` : '');
+  const rcBtn = (o) => (o.receipt
+    ? `<button class="rcb on" type="button" data-rc="${o.id}" title="${o.receipt.kind === 'link' ? 'Ссылка: ' + esc(o.receipt.host) : 'Чек: ' + esc(o.receipt.name)}" aria-label="${o.receipt.kind === 'link' ? 'Открыть ссылку на чек' : 'Открыть чек'}">${ic(o.receipt.kind === 'link' ? 'link' : 'clip')}</button>`
+    : `<button class="rcb" type="button" data-rc="${o.id}" title="Прикрепить чек или ссылку" aria-label="Прикрепить чек или ссылку">${ic('clip')}</button>`);
+  const addedOn = (iso) => { try { return new Intl.DateTimeFormat('ru-RU', { timeZone: (S && S.timezone) || 'Europe/Moscow', day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(iso)); } catch (e) { return dmy(String(iso).slice(0, 10)); } };
+  const MONTHS_L = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+
+  function receiptSheet(onChange) {
+    document.body.insertAdjacentHTML('beforeend', '<div class="sheet-ov" id="rcpt" aria-hidden="true"><div class="sheet rcs" role="dialog" aria-label="Чек или ссылка"></div></div>');
+    const ov = $('#rcpt'), box = $('.rcs', ov);
+    let O = null, MODE = 'view', D = null, ASK = false, BUSY = false;
+    const fresh = (x = {}) => ({ kind: 'file', file: null, url: '', err: '', date: TODAY, ...x });
+    const fileUrl = (o) => BillPayApi.receiptFileUrl(o.id);
+    const period = (o) => `${MONTHS_L[+o.month.slice(5, 7) - 1]} ${o.month.slice(0, 4)}`;
+    const head = (icon, title, sub, cls = '') => `<div class="grab"></div><div class="sh-h dh"><span class="dic ${cls}">${ic(icon)}</span><div class="dt2"><b>${title}</b><small>${sub}</small></div><button class="ibtn sm" type="button" data-rcclose aria-label="Закрыть">${ic('x')}</button></div>`;
+    const attach = () => `<div class="f rca"><span class="lab">Чек или ссылка${MODE === 'pay' ? ' <span class="optl">необязательно</span>' : ''}</span>
+        <div class="seg two" role="radiogroup" aria-label="Что прикрепить">${[['file', 'Файл', 'upload'], ['link', 'Ссылка', 'link']].map(([k, l, i]) => `<label><input type="radio" name="rk" value="${k}" ${D.kind === k ? 'checked' : ''}>${ic(i)}${l}</label>`).join('')}</div>
+        ${D.kind === 'file'
+          ? (D.file ? `<div class="rcf"><span class="ft ${D.file.type === 'application/pdf' ? 'pdf' : ''}">${D.file.type === 'application/pdf' ? 'PDF' : ic('img')}</span><span class="fn"><b>${esc(D.file.name)}</b><small>${RC_TYPES[D.file.type]} · ${kb(D.file.size)}</small></span><button class="ibtn sm" type="button" data-rcclear aria-label="Убрать файл">${ic('x')}</button></div>`
+            : `<label class="drop ${D.err ? 'err' : ''}"><input type="file" accept="application/pdf,image/jpeg,image/png" data-rcfile hidden><span class="dpi">${ic(D.err ? 'x' : 'upload')}</span><b>Выберите файл или перетащите сюда</b><small>PDF, JPG или PNG · до 10\u00a0МБ</small></label>`)
+          : `<input class="inp" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://" value="${esc(D.url)}" data-rcurl aria-invalid="${!!D.err}" aria-label="Ссылка на чек">`}
+        <span class="fnote ${D.err ? 'err' : ''}">${D.err ? esc(D.err) : D.kind === 'file' ? 'Чек из банка, ОФД или фото квитанции. Один файл на оплату — его увидят все пользователи.' : 'Ссылка на чек в банке, ОФД или личном кабинете поставщика.'}</span></div>`;
+    const preview = (o) => {
+      const r = o.receipt;
+      if (r.kind === 'link') return `<a class="rcl" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer"><span class="ft">${ic('link')}</span><span class="fn"><b>${esc(r.host)}</b><small>${esc(r.url)}</small></span>${ic('ext')}</a>`;
+      const img = r.mime !== 'application/pdf';
+      return `${img ? `<a class="rci" href="${fileUrl(o)}" target="_blank" rel="noopener"><img src="${fileUrl(o)}" alt="Чек: ${esc(r.name)}"></a>` : ''}<a class="rcl" href="${fileUrl(o)}" target="_blank" rel="noopener"><span class="ft ${img ? '' : 'pdf'}">${img ? ic('img') : 'PDF'}</span><span class="fn"><b>${esc(r.name)}</b><small>${RC_TYPES[r.mime]} · ${kb(r.size)} · открыть в новой вкладке</small></span>${ic('ext')}</a>`;
+    };
+    const kept = (o) => `<div class="f rca"><span class="lab">Чек или ссылка</span>${preview(o).replace(/<a class="rci"[\s\S]*?<\/a>/, '')}<span class="fnote">Сохранён с прошлой отметки и снова появится у оплаты. Заменить или удалить — после отметки.</span></div>`;
+    const who = (r) => `${r.kind === 'link' ? 'Ссылку добавил' : 'Чек прикрепил'}${r.added_by ? ' ' + esc(r.added_by.login) : ''} · ${addedOn(r.added_at)}`;
+    function draw() {
+      const o = O, amt = fmt(o.amount, o.currency), r = o.receipt;
+      if (MODE === 'pay') {
+        box.innerHTML = head('check', 'Отметить оплату', `${esc(o.name)} · ${amt} · срок ${dmy(o.due_date)}`) +
+          `<div class="sh-b"><div class="f"><label for="rcDate">Фактическая дата оплаты</label><input class="inp" id="rcDate" type="date" max="${TODAY}" value="${D.date}" data-rcdate></div>${r ? kept(o) : attach()}</div>
+          <div class="sh-f pfs-f"><button class="btn ghost lg" type="button" data-rcclose>Отмена</button><button class="btn lg" type="button" data-rcpay>${ic('check')}Отметить оплату</button></div>`;
+        return;
+      }
+      const sub = `оплачено ${dmy(o.paid_at)} · ${amt} · ${period(o)}`;
+      let body;
+      if (ASK) body = `<div class="rcask"><b>Удалить ${r.kind === 'link' ? 'ссылку' : 'чек'}?</b><p>${r.kind === 'link' ? 'Ссылка' : 'Файл'} удалится из BillPay без восстановления, отметка «Оплачено» останется. В журнале действий будет запись об удалении.</p>${preview({ ...o, receipt: { ...r } }).replace(/<a class="rci"[\s\S]*?<\/a>/, '')}<div class="rcact"><button class="btn ghost" type="button" data-rcno>Отмена</button><button class="btn danger" type="button" data-rcyes>${ic('trash')}Удалить</button></div></div>`;
+      else if (r && MODE !== 'replace') body = `<div class="rcbox">${preview(o)}<div class="rcm">${ic(r.kind === 'link' ? 'link' : 'clip')}<span>${who(r)}</span></div><div class="rcact"><button class="btn ghost" type="button" data-rcreplace>${ic('upload')}Заменить</button><button class="btn ghost del" type="button" data-rcdel>${ic('trash')}Удалить</button></div></div>`;
+      else body = attach();
+      const editing = !r || MODE === 'replace';
+      box.innerHTML = head(r ? (r.kind === 'link' ? 'link' : 'clip') : 'check', esc(o.name), sub) + `<div class="sh-b">${body}</div>
+        <div class="sh-f pfs-f">${editing ? `<button class="btn ghost lg" type="button" ${MODE === 'replace' ? 'data-rcback' : 'data-rcclose'}>Отмена</button><button class="btn lg" type="button" data-rcsave>${ic('clip')}${MODE === 'replace' ? 'Заменить' : 'Прикрепить'}</button>` : '<button class="btn ghost lg" type="button" data-rcclose>Закрыть</button>'}</div>`;
+    }
+    const open = (o, mode = 'view', extra = {}) => { O = o; MODE = mode; D = fresh(extra); ASK = false; draw(); ov.classList.add('on'); ov.setAttribute('aria-hidden', 'false'); };
+    const close = () => { ov.classList.remove('on'); ov.setAttribute('aria-hidden', 'true'); };
+    const valid = (need) => {
+      if (D.kind === 'link') { const v = D.url.trim(); if (!v) { if (need) D.err = 'Вставьте ссылку на чек'; return !need; } D.err = checkUrl(v); return !D.err; }
+      if (!D.file) { if (need) D.err = 'Выберите файл'; return !need; }
+      return true;
+    };
+    const has = () => (D.kind === 'link' ? !!D.url.trim() : !!D.file);
+    const upload = async (o) => (D.kind === 'link' ? BillPayApi.putReceiptLink(o.id, D.url.trim()) : BillPayApi.putReceiptFile(o.id, D.file));
+    const pick = (f) => { if (!f) return; D.err = checkFile(f); D.file = D.err ? null : f; draw(); };
+    box.addEventListener('change', (e) => {
+      if (e.target.name === 'rk') { D.kind = e.target.value; D.err = ''; draw(); }
+      if (e.target.matches('[data-rcfile]')) pick(e.target.files[0]);
+      if (e.target.matches('[data-rcdate]')) D.date = e.target.value;
+    });
+    box.addEventListener('input', (e) => { if (e.target.matches('[data-rcurl]')) { D.url = e.target.value; if (D.err) { D.err = ''; e.target.setAttribute('aria-invalid', 'false'); const n = $('.fnote', box); n.classList.remove('err'); n.textContent = 'Ссылка на чек в банке, ОФД или личном кабинете поставщика.'; } } });
+    box.addEventListener('dragover', (e) => { const d = e.target.closest('.drop'); if (d) { e.preventDefault(); d.classList.add('over'); } });
+    box.addEventListener('dragleave', (e) => { const d = e.target.closest('.drop'); if (d) d.classList.remove('over'); });
+    box.addEventListener('drop', (e) => { const d = e.target.closest('.drop'); if (d) { e.preventDefault(); pick(e.dataTransfer.files[0]); } });
+    box.addEventListener('click', async (e) => {
+      const t = e.target;
+      if (t.closest('[data-rcclose]')) return close();
+      if (t.closest('[data-rcclear]')) { D.file = null; D.err = ''; return draw(); }
+      if (t.closest('[data-rcreplace]')) { MODE = 'replace'; D = fresh(); return draw(); }
+      if (t.closest('[data-rcback]')) { MODE = 'view'; return draw(); }
+      if (t.closest('[data-rcdel]')) { ASK = true; return draw(); }
+      if (t.closest('[data-rcno]')) { ASK = false; return draw(); }
+      if (BUSY) return;
+      const o = O;
+      try {
+        BUSY = true;
+        if (t.closest('[data-rcyes]')) {
+          await BillPayApi.deleteReceipt(o.id); const was = o.receipt; o.receipt = null; ASK = false; MODE = 'view'; draw(); onChange(o, 'receipt');
+          toast(`${was.kind === 'link' ? 'Ссылка удалена' : 'Чек удалён'}<small>${esc(o.name)}</small>`);
+        } else if (t.closest('[data-rcsave]')) {
+          if (!valid(true)) return draw();
+          const r = await upload(o); const replaced = !!o.receipt; o.receipt = r; MODE = 'view'; draw(); onChange(o, 'receipt');
+          toast(`${r.kind === 'link' ? 'Ссылка' : 'Чек'} ${replaced ? 'заменён' : r.kind === 'link' ? 'прикреплена' : 'прикреплён'}<small>${esc(o.name)}</small>`);
+        } else if (t.closest('[data-rcpay]')) {
+          const date = D.date;
+          if (!date) { toast('Укажите фактическую дату'); return; }
+          if (date > TODAY) { toast('Дата не может быть в будущем'); return; }
+          if (!valid(false)) return draw();
+          const was = !!o.receipt;
+          const u = await BillPayApi.setPaid(o.id, date); o.paid_at = u.paid_at || date;
+          if (!o.receipt && has()) {
+            try { o.receipt = await upload(o); } catch (x) { onChange(o, 'paid'); MODE = 'view'; D.err = x.message; draw(); return; }
+          }
+          close(); onChange(o, 'paid');
+          toast(`${esc(o.name)} — оплачено<small>${dmy(o.paid_at)}${o.receipt ? ` · ${was ? (o.receipt.kind === 'link' ? 'ссылка сохранена' : 'чек сохранён') : o.receipt.kind === 'link' ? 'ссылка прикреплена' : 'чек прикреплён'}` : ''}</small>`);
+        }
+      } catch (x) { if (MODE === 'pay' || ASK) toast(esc(x.message)); else { D.err = x.message; draw(); } } finally { BUSY = false; }
+    });
+    ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ov.classList.contains('on')) close(); });
+    return { open, close };
+  }
+
   async function dashboard() {
     const isAdmin = S.currentUser.role === 'admin';
     shell('payments', `Платежи<i></i><b>${monthName} ${year}</b>`,
@@ -241,7 +357,7 @@
       if (o.paid_at) return `<span class="fd"><span class="lb">Факт</span><button type="button" class="fdb" data-fix="${o.id}" title="Исправить дату">${dmy(o.paid_at)}</button></span>`;
       return `<span class="fd m"><span class="lb">Факт</span>—</span>`;
     };
-    const inner = (o) => { const s = status(o), l = late(o); return `<span class="nm">${hl(o.name)}<small>ежемесячно</small></span><span class="amt">${num(o.amount, o.currency)}<span class="cc">${o.currency}</span></span><span class="due"><span class="lb">Срок</span>${dmy(o.due_date)}</span><span class="stc"><span class="pill ${s}"><i></i>${ST[s]}</span></span>${fact(o)}<span class="lt ${l ? 'late' : 'm'}"><span class="lb">Просрочка</span>${l ? l + '\u00a0дн.' : '—'}</span><span class="ac">${editing(o) ? `<button class="mp" data-save="${o.id}" title="Сохранить дату"><span class="ck">${CHK}</span><span class="tx">Сохранить</span></button>` : s === 'paid' ? `<button class="un" data-un="${o.id}" title="Снять отметку">${ic('undo')}<span class="tx">Снять отметку</span></button>` : `<button class="mp" data-pay="${o.id}" title="Отметить оплату"><span class="ck">${CHK}</span><span class="tx">Отметить оплату</span></button>`}</span>`; };
+    const inner = (o) => { const s = status(o), l = late(o); return `<span class="nm">${hl(o.name)}<small>ежемесячно</small></span><span class="amt">${num(o.amount, o.currency)}<span class="cc">${o.currency}</span></span><span class="due"><span class="lb">Срок</span>${dmy(o.due_date)}</span><span class="stc"><span class="pill ${s}"><i></i>${ST[s]}</span></span>${fact(o)}<span class="lt ${l ? 'late' : 'm'}"><span class="lb">Просрочка</span>${l ? l + '\u00a0дн.' : '—'}</span><span class="ac">${PICK === o.id ? `<button class="rcb" type="button" data-paysheet="${o.id}" title="Отметить с чеком или ссылкой" aria-label="Отметить оплату с чеком или ссылкой">${ic('clip')}</button>` : ''}${editing(o) ? `<button class="mp" data-save="${o.id}" title="Сохранить дату"><span class="ck">${CHK}</span><span class="tx">Сохранить</span></button>` : s === 'paid' ? `${rcBtn(o)}<button class="un" data-un="${o.id}" title="Снять отметку">${ic('undo')}<span class="tx">Снять отметку</span></button>` : `<button class="mp" data-pay="${o.id}" title="Отметить оплату"><span class="ck">${CHK}</span><span class="tx">Отметить оплату</span></button>`}</span>`; };
     const row = (o, i, mode) => `<div class="grid rw ${mode ? 'rise' : ''}" id="r-${o.id}" style="--d:${(mode === 'load' ? 240 : 0) + Math.min(i, 12) * 26}ms">${inner(o)}</div>`;
     const head = () => {
       $('#ghead').innerHTML = [['name'], ['amount', 'r'], ['due_date'], ['status'], ['paid_at'], ['overdue_days', 'r']].map(([k, r]) => {
@@ -347,6 +463,14 @@
       paint(o); refresh(); load('filter', true);
     }
 
+    const sync = (o) => [PAGE.items, occ].forEach((l) => l.forEach((x) => { if (x.id === o.id && x !== o) { x.receipt = o.receipt; } }));
+    const RC = receiptSheet((o, what) => {
+      sync(o);
+      if (what !== 'receipt') { setLocal(o.id, o.paid_at); PICK = null; EDIT = null; }
+      paint(find(o.id));
+      const r = $('#r-' + o.id); if (r && what === 'paid') r.classList.add('flash');
+      if (what !== 'receipt') { refresh(); load('filter', true); }
+    });
     const sh = $('#sheet');
     function sheet() {
       const c = PAGE.counts;
@@ -399,7 +523,9 @@
       const b = e.target.closest('[data-pay]'); if (b) return askDate(+b.dataset.pay);
       const fix = e.target.closest('[data-fix]'); if (fix) return openDate(+fix.dataset.fix);
       const s = e.target.closest('[data-save]'); if (s) { const inp = $(`[data-date="${s.dataset.save}"]`); return commitDate(+s.dataset.save, inp ? inp.value : TODAY); }
-      const u = e.target.closest('[data-un]'); if (u) unpay(+u.dataset.un);
+      const u = e.target.closest('[data-un]'); if (u) return unpay(+u.dataset.un);
+      const rc = e.target.closest('[data-rc]'); if (rc) return RC.open(find(+rc.dataset.rc));
+      const ps = e.target.closest('[data-paysheet]'); if (ps) { const inp = $(`[data-date="${ps.dataset.paysheet}"]`); return RC.open(find(+ps.dataset.paysheet), 'pay', { date: inp && inp.value ? inp.value : TODAY }); }
     });
     $('#rows').addEventListener('keydown', (e) => {
       const inp = e.target.closest('[data-date]'); if (!inp || e.key !== 'Enter') return;
@@ -454,7 +580,7 @@
       const item = (o) => {
         const s = status(o), l = late(o), sh = o.day && o.day > +o.due_date.slice(8), until = days(o.due_date, TODAY);
         const sub = s === 'paid' ? `оплачено ${dm(o.paid_at)}${l ? ` · просрочка ${l}\u00a0дн.` : ''}` : s === 'overdue' ? `просрочка ${l}\u00a0дн.` : until === 0 ? 'срок сегодня' : until === 1 ? 'срок завтра' : `через ${until}\u00a0дн.`;
-        return `<div class="ri dri"><span class="cd">${SYM[o.currency]}</span><span class="nm">${esc(o.name)}<small><b class="am">${fmt(o.amount, o.currency)}</b> · ${sub}</small>${sh ? `<small class="shn">${ic('info')}по графику ${o.day}-е — в ${monthIn} ${dim} дней, срок в последний день месяца</small>` : ''}</span><span class="pill ${s}"><i></i>${ST[s]}</span></div>`;
+        return `<div class="ri dri"><span class="cd">${SYM[o.currency]}</span><span class="nm">${esc(o.name)}<small><b class="am">${fmt(o.amount, o.currency)}</b> · ${sub}</small>${sh ? `<small class="shn">${ic('info')}по графику ${o.day}-е — в ${monthIn} ${dim} дней, срок в последний день месяца</small>` : ''}</span><span class="dra">${s === 'paid' ? rcBtn(o) : ''}<span class="pill ${s}"><i></i>${ST[s]}</span></span></div>`;
       };
       const sums = CURS.filter((c) => os.some((o) => o.currency === c)).map((c) => `<span><em>${c}</em>${fmt(os.filter((o) => o.currency === c).reduce((a, o) => a + o.amount, 0), c)}</span>`).join('');
       $('#day').innerHTML = `<div class="th dh"><div><span class="lbl">${WD[new Date(SEL + 'T00:00:00Z').getUTCDay()]}${rel ? ' · ' + rel : ''}</span><span class="h3">${longDate(SEL)}</span></div><div class="dnav"><button class="ibtn sm" type="button" data-dstep="-1" aria-label="Предыдущий день">${ic('back')}</button><button class="ibtn sm" type="button" data-dstep="1" aria-label="Следующий день">${ic('chev')}</button></div></div>
@@ -502,7 +628,8 @@
       if (step) { e.preventDefault(); go(addD(SEL, step)); const n = $(`[data-day="${SEL}"]`); if (n) n.focus(); }
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(c.dataset.day); const n = $(`[data-day="${SEL}"]`); if (n) n.focus(); }
     });
-    $('#day').addEventListener('click', (e) => { const b = e.target.closest('[data-dstep]'); if (b) go(addD(SEL, +b.dataset.dstep)); });
+    const RC = receiptSheet(() => day());
+    $('#day').addEventListener('click', (e) => { const rc = e.target.closest('[data-rc]'); if (rc) return RC.open(occ.find((o) => o.id === +rc.dataset.rc)); const b = e.target.closest('[data-dstep]'); if (b) go(addD(SEL, +b.dataset.dstep)); });
     $('#ondate').addEventListener('click', (e) => { const dp = e.target.closest('.dpick'); if (dp && e.target.tagName !== 'INPUT') { try { $('input', dp).showPicker(); } catch (x) {} } });
     $('#ondate').addEventListener('change', (e) => { if (e.target.id === 'dateIn' && isDate(e.target.value)) go(e.target.value); });
 
@@ -627,9 +754,10 @@
       'payment.created': ['Платёж создан', 'plus', ''], 'payment.updated': ['Платёж изменён', 'edit', ''], 'payment.deleted': ['Платёж удалён', 'trash', 'bad'],
       'occurrence.paid': ['Отмечено «Оплачено»', 'check', 'ok'], 'occurrence.unpaid': ['Отметка оплаты снята', 'undo', ''], 'occurrence.paid_at': ['Дата оплаты изменена', 'cal', ''],
       'user.created': ['Пользователь добавлен', 'user', ''], 'user.updated': ['Пользователь изменён', 'edit', ''], 'user.deleted': ['Пользователь удалён', 'trash', 'bad'],
-      'profile.email': ['Своя почта изменена', 'mail', '']
+      'profile.email': ['Своя почта изменена', 'mail', ''],
+      'occurrence.receipt_added': ['Чек прикреплён', 'clip', ''], 'occurrence.receipt_replaced': ['Чек заменён', 'clip', ''], 'occurrence.receipt_removed': ['Чек удалён', 'trash', 'bad']
     };
-    const FIELD = { name: 'Название', amount: 'Сумма', currency: 'Валюта', day: 'День оплаты', next_date: 'Ближайшая оплата', active: 'Статус', paid_at: 'Оплачено', login: 'Логин', email: 'Почта', password: 'Пароль', user: 'Пользователь' };
+    const FIELD = { name: 'Название', amount: 'Сумма', currency: 'Валюта', day: 'День оплаты', next_date: 'Ближайшая оплата', active: 'Статус', paid_at: 'Оплачено', login: 'Логин', email: 'Почта', password: 'Пароль', user: 'Пользователь', receipt: 'Чек или ссылка' };
     const fieldName = (e, c) => (c.field === 'paid_at' && e.event === 'occurrence.paid_at' ? 'Дата оплаты' : c.field === 'name' && e.object && e.object.type === 'user' ? 'Имя' : FIELD[c.field] || c.field);
     const MG = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
     const WD = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];

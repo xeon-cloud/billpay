@@ -2,12 +2,13 @@ const config = require('./config');
 const D = require('./dates');
 const { tx } = require('./db');
 const { events: E } = require('./audit');
+const { RECEIPT_JSON, receiptView } = require('./receipts');
 
 const CURRENCIES = ['RUB', 'USD', 'EUR'];
 const round2 = (n) => Math.round(n * 100) / 100;
 
 const RP_COLS = 'id, name, amount, currency::text AS currency, periodicity, day, start_date, active, created_at, created_by, deleted_at';
-const OCC_COLS = 'id, recurring_payment_id, month::text AS month, name, amount, currency::text AS currency, due_date, paid_at, paid_by, (SELECT rp.day FROM recurring_payments rp WHERE rp.id = recurring_payment_id) AS day';
+const OCC_COLS = 'id, recurring_payment_id, month::text AS month, name, amount, currency::text AS currency, due_date, paid_at, paid_by, (SELECT rp.day FROM recurring_payments rp WHERE rp.id = recurring_payment_id) AS day, ' + RECEIPT_JSON + ' AS receipt';
 
 function createPayments(pool) {
   function status(o, today = D.today()) {
@@ -20,7 +21,8 @@ function createPayments(pool) {
       id: o.id, recurring_payment_id: o.recurring_payment_id, month: o.month,
       name: o.name, amount: o.amount, currency: o.currency,
       due_date: o.due_date, day: o.day, paid_at: o.paid_at, is_paid: !!o.paid_at,
-      status: st, overdue_days: Math.max(0, D.diffDays(o.paid_at || today, o.due_date))
+      status: st, overdue_days: Math.max(0, D.diffDays(o.paid_at || today, o.due_date)),
+      receipt: receiptView(o.receipt)
     };
   }
 

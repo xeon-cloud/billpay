@@ -96,6 +96,8 @@ const amountOf = (x) => money(x.amount, x.currency);
 const dayOf = (d) => `${d} число`;
 const dateOf = (d) => (d ? dmy(String(d).slice(0, 10)) : null);
 const monthOf = (m) => `${MONTHS[+String(m).slice(5, 7) - 1]} ${String(m).slice(0, 4)}`;
+const sizeOf = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1).replace('.', ',')} МБ` : `${Math.max(1, Math.round(n / 1024))} КБ`);
+const receiptOf = (r) => { if (!r) return null; if (r.kind === 'link') { let h = r.url; try { h = new URL(r.url).hostname.replace(/^www\./, ''); } catch {} return `Ссылка: ${h}`; } return `Файл: ${r.filename} (${sizeOf(Number(r.size))})`; };
 const ch = (field, before, after) => ({ field, before: before ?? null, after: after ?? null });
 const paymentObject = (rp) => ({ objectType: 'payment', objectId: rp.id, objectLabel: label(rp.name, `ежемесячно · ${amountOf(rp)}`) });
 const occurrenceObject = (o) => ({ objectType: 'occurrence', objectId: o.id, objectLabel: label(o.name, `${monthOf(o.month)} · ${amountOf(o)}`) });
@@ -122,6 +124,9 @@ const events = {
     const event = !b ? 'occurrence.paid' : !a ? 'occurrence.unpaid' : 'occurrence.paid_at';
     return { event, ...occurrenceObject(after), changes: [ch('paid_at', dateOf(b), dateOf(a))] };
   },
+  receiptAdded: (o, r) => ({ event: 'occurrence.receipt_added', ...occurrenceObject(o), changes: [ch('receipt', null, receiptOf(r))] }),
+  receiptReplaced: (o, before, after) => ({ event: 'occurrence.receipt_replaced', ...occurrenceObject(o), changes: [ch('receipt', receiptOf(before), receiptOf(after))] }),
+  receiptRemoved: (o, r) => ({ event: 'occurrence.receipt_removed', ...occurrenceObject(o), changes: [ch('receipt', receiptOf(r), null)] }),
   userCreated: (u) => ({
     event: 'user.created', ...userObject(u, u.name),
     changes: [ch('login', null, u.login), ch('name', null, u.name), ...(u.email ? [ch('email', null, u.email)] : []), ch('password', null, 'задан')]

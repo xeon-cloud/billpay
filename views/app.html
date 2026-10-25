@@ -22,8 +22,8 @@
 <link rel="stylesheet" href="/assets/fonts/fonts.css">
 <link rel="stylesheet" href="/assets/css/tokens.css?v=5">
 <link rel="stylesheet" href="/assets/css/app.css?v=5">
+<link rel="stylesheet" href="/assets/css/receipts.css">
 <link rel="stylesheet" href="/assets/css/periods.css?v=5">
-<!-- Тема до первой отрисовки — без мигания -->
 <script>try{var t=localStorage.getItem('billpay-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=t;document.querySelector('meta[name=theme-color]').content=t==='light'?'#F4F3EF':'#0A0A0A'}catch(e){}</script>
 </head>
 <body data-page="dashboard">
@@ -53,7 +53,6 @@
           <div class="mswitch" id="mnav" role="group" aria-label="Месяц"></div>
         </div>
 
-        <!-- поиск по названию + валюта; на мобиле — липкая панель и кнопка фильтров -->
         <div class="pt-bar" id="bar">
           <label class="psearch" id="psearch">
             <span data-ic="search"></span>
@@ -84,7 +83,6 @@
           <button class="more reset-l" type="button" data-reset id="resetL" hidden>Сбросить</button>
         </div>
 
-        <!-- итоги по найденным периодам, отдельно по каждой валюте -->
         <div class="pt-sum" id="psum"></div>
 
         <div class="grid gh" id="ghead" role="row"></div>
@@ -98,7 +96,6 @@
 <script src="/assets/js/api.js?v=5"></script>
 <script src="/assets/js/app.js?v=5"></script>
 
-<!-- мобильный bottom sheet: статус, валюта, сортировка -->
 <div class="sheet-ov" id="sheet" aria-hidden="true">
   <div class="sheet" role="dialog" aria-label="Фильтры и сортировка">
     <div class="grab"></div>

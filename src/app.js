@@ -131,6 +131,7 @@ async function createApp({ pool = createPool(), loginRateMax = config.loginRateL
 
   app.use((err, req, res, _next) => {
     if (err.type === 'entity.parse.failed') return res.status(400).json({ detail: 'Некорректный JSON' });
+    if (err.type === 'entity.too.large') return res.status(413).json({ detail: 'Слишком большой запрос' });
     console.error(err);
     if (req.path.startsWith('/api')) return res.status(500).json({ detail: 'Внутренняя ошибка сервера' });
     res.status(500).send('Внутренняя ошибка сервера');
