@@ -37,19 +37,32 @@ function shouldNotify(due, today, daysBefore) {
   return D.diffDays(due, today) <= daysBefore;
 }
 
-function formatReminder(o, today) {
+function formatReminder(o, today, paidAt) {
   const when = whenLabel(o.due_date, today);
-  return `<i>🔔 Напоминание ·</i> <b><i>${esc(when)}</i></b>\n\n<blockquote><b><i>Срок:</i></b> <i>${esc(dmy(o.due_date))}</i>\n<b><i>Название:</i></b> <i>${esc(o.name)}\nСумма: ${esc(money(o.amount, o.currency))}\nВалюта: ${esc(o.currency)}</i></blockquote>\n\n<b><i>Не оплачено!</i></b>`;
+  const foot = paidAt ? `Оплачено · ${esc(dmy(paidAt))}` : 'Не оплачено!';
+  return `<i>🔔 Напоминание ·</i> <b><i>${esc(when)}</i></b>\n\n<blockquote><b><i>Срок:</i></b> <i>${esc(dmy(o.due_date))}</i>\n<b><i>Название:</i></b> <i>${esc(o.name)}\nСумма: ${esc(money(o.amount, o.currency))}\nВалюта: ${esc(o.currency)}</i></blockquote>\n\n<b><i>${foot}</i></b>`;
 }
 
-async function sendMessage(token, chatId, text) {
-  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+function payKeyboard(id) {
+  return { inline_keyboard: [[{ text: 'Оплачено', callback_data: `paid:${id}` }]] };
+}
+
+async function callApi(token, method, body) {
+  const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true })
+    body: JSON.stringify(body)
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.ok) throw new Error(data.description || `Telegram ${res.status}`);
+  return data;
 }
 
-module.exports = { formatReminder, shouldNotify, sendMessage, money, dmy, whenLabel, daysWord };
+async function sendMessage(token, chatId, text, replyMarkup) {
+  await callApi(token, 'sendMessage', {
+    chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true,
+    ...(replyMarkup ? { reply_markup: replyMarkup } : {})
+  });
+}
+
+module.exports = { formatReminder, shouldNotify, sendMessage, callApi, payKeyboard, money, dmy, whenLabel, daysWord };

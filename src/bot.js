@@ -2,7 +2,7 @@ const config = require('./config');
 const D = require('./dates');
 const { createPool, waitForDb, migrate } = require('./db');
 const { createPayments } = require('./payments');
-const { formatReminder, sendMessage } = require('./telegram');
+const { formatReminder, sendMessage, callApi, payKeyboard } = require('./telegram');
 const { createTransport, sendReminder } = require('./mailer');
 const { sendWebhook, hostOf } = require('./webhook');
 
@@ -70,6 +70,51 @@ async function deliver(client, today, channel, recipient, send) {
 let sharedTransport = null;
 const mailTransport = () => (sharedTransport ||= createTransport());
 
+// кнопка в чате
+async function onPaid(payments, q) {
+  const token = config.telegramBotToken;
+  const answer = (text) => callApi(token, 'answerCallbackQuery', { callback_query_id: q.id, text }).catch(() => {});
+  const m = /^paid:(\d+)$/.exec(q.data || '');
+  if (!m) return answer('Не понял кнопку');
+  const o = await payments.getOccurrence(Number(m[1]));
+  if (!o) return answer('Платёж не найден');
+  o.due_date = String(o.due_date).slice(0, 10);
+  if (o.paid_at) o.paid_at = String(o.paid_at).slice(0, 10);
+  const paidAt = o.paid_at || D.today();
+  if (!o.paid_at) await payments.setPaid(o, true, paidAt, null);
+  const msg = q.message;
+  if (msg) {
+    await callApi(token, 'editMessageText', {
+      chat_id: msg.chat.id, message_id: msg.message_id,
+      text: formatReminder(o, D.today(), paidAt), parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: [] }
+    }).catch((e) => { if (!/not modified/i.test(e.message)) throw e; });
+  }
+  await answer(o.paid_at ? 'Уже оплачено' : 'Оплачено');
+}
+
+async function listen(payments, stop) {
+  const token = config.telegramBotToken;
+  await callApi(token, 'deleteWebhook', {}).catch(() => {});
+  let offset = 0;
+  while (!stop.done) {
+    try {
+      const data = await callApi(token, 'getUpdates', { offset, timeout: 10, allowed_updates: ['callback_query'] });
+      for (const u of data.result || []) {
+        offset = u.update_id + 1;
+        if (u.callback_query) {
+          try { await onPaid(payments, u.callback_query); }
+          catch (e) { console.error(`[billpay] кнопка оплаты: ${e.message}`); }
+        }
+      }
+    } catch (e) {
+      if (stop.done) return;
+      console.error(`[billpay] телеграм: ${e.message}`);
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+}
+
 async function dispatch(pool, payments, { transport, webhook = config.webhook } = {}) {
   const telegram = !!(config.telegramBotToken && config.telegramChatId);
   const email = !!transport || config.emailEnabled;
@@ -85,7 +130,7 @@ async function dispatch(pool, payments, { transport, webhook = config.webhook } 
   try {
     await client.query('SELECT pg_advisory_lock($1)', [LOCK]);
     if (telegram) {
-      sent.push(...await deliver(client, today, 'telegram', '', (o) => sendMessage(config.telegramBotToken, config.telegramChatId, formatReminder(o, today))));
+      sent.push(...await deliver(client, today, 'telegram', '', (o) => sendMessage(config.telegramBotToken, config.telegramChatId, formatReminder(o, today), payKeyboard(o.id))));
     }
     if (email) {
       const t = transport || mailTransport();
@@ -121,6 +166,8 @@ async function main() {
   }
   let timer;
   let busy = false;
+  const stop = { done: false };
+  if (config.telegramBotToken) listen(payments, stop);
   const warned = { telegram: false, email: false, webhook: false };
   const tick = async () => {
     if (busy) return;
@@ -147,14 +194,15 @@ async function main() {
   };
   await tick();
   timer = setInterval(tick, INTERVAL_MS);
-  const stop = async () => {
+  const halt = async () => {
+    stop.done = true;
     clearInterval(timer);
     if (sharedTransport) sharedTransport.close();
     await pool.end().catch(() => {});
     process.exit(0);
   };
-  process.on('SIGTERM', stop);
-  process.on('SIGINT', stop);
+  process.on('SIGTERM', halt);
+  process.on('SIGINT', halt);
 }
 
 if (require.main === module) {
