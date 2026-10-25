@@ -1,12 +1,12 @@
 const config = require('./config');
 const D = require('./dates');
 const { tx } = require('./db');
+const { events: E } = require('./audit');
 
 const CURRENCIES = ['RUB', 'USD', 'EUR'];
 const round2 = (n) => Math.round(n * 100) / 100;
 
 const RP_COLS = 'id, name, amount, currency::text AS currency, periodicity, day, start_date, active, created_at, created_by, deleted_at';
-// день графика
 const OCC_COLS = 'id, recurring_payment_id, month::text AS month, name, amount, currency::text AS currency, due_date, paid_at, paid_by, (SELECT rp.day FROM recurring_payments rp WHERE rp.id = recurring_payment_id) AS day';
 
 function createPayments(pool) {
@@ -24,7 +24,6 @@ function createPayments(pool) {
     };
   }
 
-  // гонку игнорируем
   async function ensureMonth(month, db = pool) {
     const limit = D.addMonths(D.today().slice(0, 7), 12);
     if (month > limit) return;
@@ -62,7 +61,6 @@ function createPayments(pool) {
     if (f.status && o.status !== f.status) return false;
     return true;
   };
-  // без конвертации
   function sortList(list, sort = 'due_date', order = 'asc') {
     const f = SORTS[sort] || SORTS.due_date, d = order === 'desc' ? -1 : 1;
     return list.sort((a, b) => {
@@ -90,7 +88,6 @@ function createPayments(pool) {
     return filter.sort || filter.order ? sortList(list, filter.sort, filter.order) : list;
   }
 
-  // счётчики вкладок
   async function occurrencePage(month, filter = {}) {
     const all = await occurrences(month);
     const base = all.filter((o) => matches(o, { ...filter, status: undefined }));
@@ -109,14 +106,12 @@ function createPayments(pool) {
     return totals(await occurrences(month, filter));
   }
 
-  // досоздаём месяцы
   async function ensureThrough(month) {
     const { rows: [r] } = await pool.query("SELECT to_char(min(start_date), 'YYYY-MM') AS m FROM recurring_payments");
     if (!r.m) return;
     for (let m = r.m; m <= month; m = D.addMonths(m, 1)) await ensureMonth(m);
   }
 
-  // корзины на дату
   async function summaryOnDate(date, { items: withItems = false } = {}) {
     const month = date.slice(0, 7), today = D.today();
     await ensureThrough(month);
@@ -151,7 +146,6 @@ function createPayments(pool) {
     return withItems ? { as_of: date, month, totals, items } : totals.map((x) => ({ ...x, as_of: date }));
   }
 
-  // окно напоминания
   async function reminders(month) {
     const today = D.today(), before = config.remindDaysBefore;
     return (await occurrences(month))
@@ -160,7 +154,6 @@ function createPayments(pool) {
       .sort((a, b) => a.send_date.localeCompare(b.send_date));
   }
 
-  // ближайший срок
   async function nextDates(rps) {
     if (!rps.length) return new Map();
     await ensureMonth(D.today().slice(0, 7));
@@ -203,7 +196,7 @@ function createPayments(pool) {
     return err;
   }
 
-  async function createRecurring(b, userId) {
+  async function createRecurring(b, userId, log = null) {
     const rp = await tx(pool, async (c) => {
       const { rows: [rp] } = await c.query(
         `INSERT INTO recurring_payments (name, amount, currency, periodicity, day, start_date, active, created_at, created_by)
@@ -214,14 +207,18 @@ function createPayments(pool) {
         `INSERT INTO payment_occurrences (recurring_payment_id, month, name, amount, currency, due_date) VALUES ($1, $2, $3, $4, $5, $6)`,
         [rp.id, b.next_date.slice(0, 7), rp.name, rp.amount, rp.currency, b.next_date]
       );
+      if (log) await log(c, E.paymentCreated(rp, b.next_date));
       return rp;
     });
     return rpViewOne(rp);
   }
 
-  // только неоплаченные
-  async function updateRecurring(rp, b) {
+  async function updateRecurring(rp, b, log = null) {
+    const nextBefore = log && b.next_date !== undefined ? (await nextDates([rp])).get(rp.id) : null;
     const updated = await tx(pool, async (c) => {
+      const { rows: [cur] } = await c.query(`SELECT ${RP_COLS} FROM recurring_payments WHERE id = $1 AND active FOR UPDATE`, [rp.id]);
+      if (!cur) return null;
+      rp = cur;
       const name = b.name !== undefined ? b.name.trim() : rp.name;
       const amount = b.amount !== undefined ? round2(b.amount) : rp.amount;
       const currency = b.currency !== undefined ? b.currency : rp.currency;
@@ -243,26 +240,32 @@ function createPayments(pool) {
           [o.id, name, amount, currency, due]
         );
       }
+      if (log) await log(c, E.paymentUpdated(cur, u, nextBefore, b.next_date));
       return u;
     });
     return updated ? rpViewOne(updated) : null;
   }
 
-  // оплаченное остаётся
-  async function deleteRecurring(rp) {
+  async function deleteRecurring(rp, log = null) {
     return tx(pool, async (c) => {
       const { rowCount } = await c.query('UPDATE recurring_payments SET active = false, deleted_at = $2 WHERE id = $1 AND active', [rp.id, D.today()]);
       if (!rowCount) return false;
       await c.query('DELETE FROM payment_occurrences WHERE recurring_payment_id = $1 AND paid_at IS NULL AND month >= $2', [rp.id, D.today().slice(0, 7)]);
+      if (log) await log(c, E.paymentDeleted(rp));
       return true;
     });
   }
 
-  async function setPaid(o, isPaid, paidAt, userId) {
-    const { rows: [u] } = await pool.query(
-      `UPDATE payment_occurrences SET paid_at = $2, paid_by = $3 WHERE id = $1 RETURNING ${OCC_COLS}`,
-      [o.id, isPaid ? paidAt || D.today() : null, isPaid ? userId : null]
-    );
+  async function setPaid(o, isPaid, paidAt, userId, log = null) {
+    const u = await tx(pool, async (c) => {
+      const { rows: [prev] } = await c.query('SELECT paid_at FROM payment_occurrences WHERE id = $1 FOR UPDATE', [o.id]);
+      const { rows: [next] } = await c.query(
+        `UPDATE payment_occurrences SET paid_at = $2, paid_by = $3 WHERE id = $1 RETURNING ${OCC_COLS}`,
+        [o.id, isPaid ? paidAt || D.today() : null, isPaid ? userId : null]
+      );
+      if (log && prev && next) await log(c, E.occurrenceChanged(prev.paid_at, next));
+      return next;
+    });
     return view(u);
   }
 

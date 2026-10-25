@@ -53,12 +53,14 @@
     updateUser: (id, body) => request('/users/' + id, { method: 'PATCH', body }),
     deleteUser: (id) => request('/users/' + id, { method: 'DELETE' }),
 
-    getAuthLogs: (params = {}) => {
+    getLogs: (kind, params = {}) => {
       const q = new URLSearchParams();
       Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== '') q.set(k, v); });
       const s = q.toString();
-      return request('/logs/auth' + (s ? '?' + s : ''));
+      return request('/logs/' + (kind === 'actions' ? 'actions' : 'auth') + (s ? '?' + s : ''));
     },
+    getAuthLogs: (params = {}) => BillPayApi.getLogs('auth', params),
+    getActionLogs: (params = {}) => BillPayApi.getLogs('actions', params),
     getLog: (id) => request('/logs/' + id),
 
     getMeta: (month = MONTH()) => request('/meta?month=' + month),

@@ -53,8 +53,8 @@ async function call(method, path, { body, cookie, ua = UA, ip, b = base, auth } 
   let json = null; try { json = JSON.parse(text); } catch {}
   return { status: res.status, json, text, headers: res.headers };
 }
-const rows = async () => (await pool.query(`SELECT * FROM audit_log ORDER BY id`)).rows;
-const last = async () => (await pool.query(`SELECT *, host(ip) AS ip_text FROM audit_log ORDER BY id DESC LIMIT 1`)).rows[0];
+const rows = async () => (await pool.query(`SELECT * FROM audit_log WHERE kind = 'auth' ORDER BY id`)).rows;
+const last = async () => (await pool.query(`SELECT *, host(ip) AS ip_text FROM audit_log WHERE kind = 'auth' ORDER BY id DESC LIMIT 1`)).rows[0];
 async function login(l, p, opts = {}) {
   const r = await call('POST', '/api/v1/auth/login', { body: { login: l, password: p }, ...opts });
   return { ...r, cookie: r.headers.get('set-cookie') ? r.headers.get('set-cookie').split(';')[0] : null };

@@ -5,7 +5,7 @@ const { createPayments } = require('./payments');
 const { formatReminder, sendMessage, callApi, payKeyboard } = require('./telegram');
 const { createTransport, sendReminder } = require('./mailer');
 const { sendWebhook, hostOf } = require('./webhook');
-const { purge } = require('./audit');
+const { purge, createAudit } = require('./audit');
 
 const LOCK = 727365;
 const INTERVAL_MS = 60 * 1000;
@@ -71,7 +71,7 @@ async function deliver(client, today, channel, recipient, send) {
 let sharedTransport = null;
 const mailTransport = () => (sharedTransport ||= createTransport());
 
-async function onPaid(payments, q) {
+async function onPaid(payments, q, audit = null) {
   const token = config.telegramBotToken;
   const answer = (text) => callApi(token, 'answerCallbackQuery', { callback_query_id: q.id, text }).catch(() => {});
   const m = /^paid:(\d+)$/.exec(q.data || '');
@@ -81,7 +81,7 @@ async function onPaid(payments, q) {
   o.due_date = String(o.due_date).slice(0, 10);
   if (o.paid_at) o.paid_at = String(o.paid_at).slice(0, 10);
   const paidAt = o.paid_at || D.today();
-  if (!o.paid_at) await payments.setPaid(o, true, paidAt, null);
+  if (!o.paid_at) await payments.setPaid(o, true, paidAt, null, audit ? audit.telegram(q) : null);
   const msg = q.message;
   if (msg) {
     await callApi(token, 'editMessageText', {
@@ -93,7 +93,7 @@ async function onPaid(payments, q) {
   await answer(o.paid_at ? 'Уже оплачено' : 'Оплачено');
 }
 
-async function listen(payments, stop) {
+async function listen(payments, stop, audit = null) {
   const token = config.telegramBotToken;
   await callApi(token, 'deleteWebhook', {}).catch(() => {});
   let offset = 0;
@@ -103,7 +103,7 @@ async function listen(payments, stop) {
       for (const u of data.result || []) {
         offset = u.update_id + 1;
         if (u.callback_query) {
-          try { await onPaid(payments, u.callback_query); }
+          try { await onPaid(payments, u.callback_query, audit); }
           catch (e) { console.error(`[billpay] кнопка оплаты: ${e.message}`); }
         }
       }
@@ -179,7 +179,7 @@ async function main() {
   let busy = false;
   let purgedOn = null;
   const stop = { done: false };
-  if (config.telegramBotToken) listen(payments, stop);
+  if (config.telegramBotToken) listen(payments, stop, createAudit(pool));
   const warned = { telegram: false, email: false, webhook: false };
   const tick = async () => {
     if (busy) return;
@@ -233,4 +233,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { dispatch, dueOccurrences, claim, purgeLogs };
+module.exports = { dispatch, dueOccurrences, claim, purgeLogs, onPaid };

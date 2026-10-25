@@ -322,15 +322,47 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/Invalid' }
+  /logs/actions:
+    get:
+      tags: [logs]
+      summary: Журнал действий — платежи, оплаты и пользователи (только админ)
+      description: |
+        Сначала новые. Пишутся: payment.created / payment.updated / payment.deleted, occurrence.paid / occurrence.unpaid /
+        occurrence.paid_at (в том числе кнопка «Оплачено» в Telegram — source telegram, source_ref и telegram — аккаунт и чат),
+        user.created / user.updated / user.deleted и profile.email (пользователь сменил свою почту через PATCH /auth/me).
+        `changes` — поля «было → стало» в читаемом виде; изменение без разницы не пишется. Пароль не записывается —
+        только факт «задан» / «изменён». Логин и имя автора, название объекта сохраняются снимком и остаются после удаления.
+        Запись идёт в той же транзакции, что и изменение, через SAVEPOINT: ошибка журнала не ломает основной запрос.
+        `counts` считаются с учётом q, user_id и дат, но без object_type — для чипов фильтра.
+      parameters:
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 100 }, description: 'Подстрока объекта, логина или имени автора, Telegram-аккаунта или значения поля без учёта регистра' }
+        - { name: object_type, in: query, required: false, schema: { type: string, enum: [all, payment, occurrence, user], default: all } }
+        - { name: user_id, in: query, required: false, schema: { type: integer }, description: 'id пользователя — автора действия' }
+        - { name: from, in: query, required: false, schema: { type: string, format: date }, description: 'С даты включительно (часовой пояс APP_TIMEZONE)' }
+        - { name: to, in: query, required: false, schema: { type: string, format: date }, description: 'По дату включительно' }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: cursor, in: query, required: false, schema: { type: string }, description: 'next_cursor из предыдущего ответа' }
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { $ref: '#/components/schemas/ActionLogPage' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Invalid' }
   /logs/{id}:
     parameters: [ { $ref: '#/components/parameters/Id' } ]
     get:
       tags: [logs]
-      summary: Одна запись журнала с полным User-Agent (только админ)
+      summary: Одна запись журнала (вход или действие) с полным User-Agent (только админ)
       responses:
         '200':
           description: OK
-          content: { application/json: { schema: { $ref: '#/components/schemas/AuthLogEntryFull' } } }
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/AuthLogEntryFull'
+                  - $ref: '#/components/schemas/ActionLogEntryFull'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -396,6 +428,63 @@ components:
             login_ok: { type: integer }
             login_fail: { type: integer }
             logout: { type: integer }
+        next_cursor: { type: string, nullable: true }
+    ActionLogChange:
+      type: object
+      required: [field, before, after]
+      properties:
+        field: { type: string, enum: [name, amount, currency, day, next_date, active, paid_at, login, email, password, user] }
+        before: { type: string, nullable: true, example: '185 000 ₽' }
+        after: { type: string, nullable: true, example: '195 000 ₽' }
+    ActionLogEntry:
+      type: object
+      required: [id, kind, at, local_at, event, result, login, user, user_deleted, source, telegram, object, changes, ip, device]
+      properties:
+        id: { type: integer }
+        kind: { type: string, enum: [action] }
+        at: { type: string, format: date-time }
+        local_at: { type: string, example: '2026-10-25T10:43:05', description: 'Время в APP_TIMEZONE' }
+        event: { type: string, enum: [payment.created, payment.updated, payment.deleted, occurrence.paid, occurrence.unpaid, occurrence.paid_at, user.created, user.updated, user.deleted, profile.email] }
+        result: { type: string, enum: [ok] }
+        reason: { type: string, nullable: true }
+        login: { type: string, nullable: true, description: 'Логин автора на момент действия; null для Telegram' }
+        user: { $ref: '#/components/schemas/AuthLogUser' }
+        user_deleted: { type: boolean }
+        source: { type: string, enum: [web, api, telegram] }
+        telegram:
+          type: object
+          nullable: true
+          properties:
+            user: { type: string, example: '@dima_orlov' }
+            chat: { type: string, nullable: true, example: 'Финансы' }
+        object:
+          type: object
+          properties:
+            type: { type: string, enum: [payment, occurrence, user] }
+            id: { type: integer }
+            label: { type: string, example: 'Аренда офиса' }
+            detail: { type: string, nullable: true, example: 'ежемесячно · 195 000 ₽' }
+        changes: { type: array, items: { $ref: '#/components/schemas/ActionLogChange' } }
+        ip: { type: string, nullable: true }
+        device: { type: string, nullable: true }
+    ActionLogEntryFull:
+      allOf:
+        - $ref: '#/components/schemas/ActionLogEntry'
+        - type: object
+          properties:
+            user_agent: { type: string, nullable: true, maxLength: 300 }
+    ActionLogPage:
+      type: object
+      required: [items, counts, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ActionLogEntry' } }
+        counts:
+          type: object
+          properties:
+            all: { type: integer }
+            payment: { type: integer }
+            occurrence: { type: integer }
+            user: { type: integer }
         next_cursor: { type: string, nullable: true }
     Error:
       type: object

@@ -33,13 +33,13 @@
     <header class="top" id="top"></header>
     <div class="content">
       <div class="phead">
-        <div><div class="lbl kicker">Администрирование</div><h1>Логи <span>входы в систему</span></h1></div>
+        <div><div class="lbl kicker">Администрирование</div><h1>Логи <span>входы и действия</span></h1></div>
         <span class="today" id="today"></span>
       </div>
 
       <section class="card pt" id="logs">
         <div class="pt-h lg-h">
-          <span class="h3">Авторизация</span>
+          <div class="ltabs" role="tablist" aria-label="Раздел журнала" id="ltabs"></div>
           <span class="lg-note" id="lgNote"></span>
         </div>
         <div class="pt-bar" id="bar">
@@ -54,10 +54,10 @@
           </div>
         </div>
         <div class="pt-tabs">
-          <div class="chips" id="chips" role="group" aria-label="Тип события"></div>
+          <div class="chips" id="chips" role="group"></div>
           <button class="more reset-l" type="button" data-reset id="resetL" hidden>Сбросить</button>
         </div>
-        <div class="lgx la gh" role="row"><span>Время</span><span>Пользователь</span><span>Результат</span><span>IP-адрес</span><span>Устройство</span><span></span></div>
+        <div class="lgx la gh" role="row" id="ghead"></div>
         <div id="rows" aria-live="polite"></div>
         <div class="lg-foot" id="foot"></div>
       </section>

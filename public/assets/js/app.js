@@ -120,7 +120,7 @@
     const base = () => [
       { t: 'Перейти: Платежи', m: 'список', ic: 'card', run: () => (location.href = '/app') },
       { t: 'Перейти: Календарь', m: 'месяц', ic: 'cal', run: () => (location.href = '/app/calendar') },
-      ...(isAdmin ? [{ t: 'Новый регулярный платёж', m: 'админ', ic: 'plus', run: () => (location.href = '/app/admin#new') }, { t: 'Перейти: Пользователи', m: 'админ', ic: 'users', run: () => (location.href = '/app/admin') }, { t: 'Перейти: Логи', m: 'админ', ic: 'list', run: () => (location.href = '/app/logs') }, { t: 'Логи: неудачные входы', m: 'авторизация', ic: 'lock', run: () => (location.href = '/app/logs?type=login_fail') }] : []),
+      ...(isAdmin ? [{ t: 'Новый регулярный платёж', m: 'админ', ic: 'plus', run: () => (location.href = '/app/admin#new') }, { t: 'Перейти: Пользователи', m: 'админ', ic: 'users', run: () => (location.href = '/app/admin') }, { t: 'Перейти: Логи', m: 'админ', ic: 'list', run: () => (location.href = '/app/logs') }, { t: 'Логи: неудачные входы', m: 'авторизация', ic: 'lock', run: () => (location.href = '/app/logs?type=login_fail') }, { t: 'Логи: изменения платежей', m: 'действия', ic: 'edit', run: () => (location.href = '/app/logs?tab=actions&object=payment') }] : []),
       { t: 'Почта для оповещений', m: 'профиль', ic: 'mail', run: () => openProfile() },
       { t: 'Сменить тему', m: 'тёмная / светлая', ic: 'moon', run: () => toggleTheme() },
       { t: 'Открыть лендинг', m: 'о продукте', ic: 'home', run: () => (location.href = '/') },
@@ -615,18 +615,34 @@
     const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 10 || h >= 20) ? b : c; };
     const keep = S.logRetentionDays || 180;
     $('#lgNote').innerHTML = `${ic('lock')}<span>Только администратор · хранится ${keep} ${plural(keep, 'день', 'дня', 'дней')}</span>`;
-    const TYPES = [['all', 'Все'], ['login_ok', 'Успешные входы'], ['login_fail', 'Неудачные'], ['logout', 'Выходы']];
+    const TYPES = {
+      auth: [['all', 'Все'], ['login_ok', 'Успешные входы'], ['login_fail', 'Неудачные'], ['logout', 'Выходы']],
+      actions: [['all', 'Все'], ['payment', 'Платежи'], ['occurrence', 'Оплаты'], ['user', 'Пользователи']]
+    };
+    const HEAD = { auth: ['Время', 'Пользователь', 'Результат', 'IP-адрес', 'Устройство'], actions: ['Время', 'Кто', 'Действие', 'Объект', 'Изменения'] };
+    const SEARCH = { auth: 'Логин, IP или устройство', actions: 'Платёж, пользователь или поле' };
     const PERIODS = [['today', 'Сегодня', 0], ['7d', '7 дней', 6], ['30d', '30 дней', 29], ['90d', '90 дней', 89], ['custom', 'Свой период']];
     const REASON = { wrong_password: 'Неверный пароль', unknown_login: 'Неизвестный логин', rate_limited: 'Слишком много попыток' };
+    const ACT = {
+      'payment.created': ['Платёж создан', 'plus', ''], 'payment.updated': ['Платёж изменён', 'edit', ''], 'payment.deleted': ['Платёж удалён', 'trash', 'bad'],
+      'occurrence.paid': ['Отмечено «Оплачено»', 'check', 'ok'], 'occurrence.unpaid': ['Отметка оплаты снята', 'undo', ''], 'occurrence.paid_at': ['Дата оплаты изменена', 'cal', ''],
+      'user.created': ['Пользователь добавлен', 'user', ''], 'user.updated': ['Пользователь изменён', 'edit', ''], 'user.deleted': ['Пользователь удалён', 'trash', 'bad'],
+      'profile.email': ['Своя почта изменена', 'mail', '']
+    };
+    const FIELD = { name: 'Название', amount: 'Сумма', currency: 'Валюта', day: 'День оплаты', next_date: 'Ближайшая оплата', active: 'Статус', paid_at: 'Оплачено', login: 'Логин', email: 'Почта', password: 'Пароль', user: 'Пользователь' };
+    const fieldName = (e, c) => (c.field === 'paid_at' && e.event === 'occurrence.paid_at' ? 'Дата оплаты' : c.field === 'name' && e.object && e.object.type === 'user' ? 'Имя' : FIELD[c.field] || c.field);
     const MG = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
     const WD = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
     const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || '') && !isNaN(Date.parse(d)) && new Date(d + 'T00:00:00Z').toISOString().slice(0, 10) === d;
     const addD = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
     const P = new URLSearchParams(location.search);
+    const tab0 = P.get('tab') === 'actions' ? 'actions' : 'auth';
+    const type0 = P.get(tab0 === 'auth' ? 'type' : 'object');
     const F = {
+      tab: tab0,
       q: (P.get('q') || '').slice(0, 100),
-      type: TYPES.some((t) => t[0] === P.get('type')) ? P.get('type') : 'all',
-      user: /^(\d+|unknown)$/.test(P.get('user') || '') ? P.get('user') : '',
+      type: TYPES[tab0].some((t) => t[0] === type0) ? type0 : 'all',
+      user: (tab0 === 'auth' ? /^(\d+|unknown)$/ : /^\d+$/).test(P.get('user') || '') ? P.get('user') : '',
       period: PERIODS.some((t) => t[0] === P.get('period')) ? P.get('period') : '30d',
       from: isDate(P.get('from')) ? P.get('from') : addD(TODAY, -29),
       to: isDate(P.get('to')) ? P.get('to') : TODAY
@@ -636,12 +652,14 @@
     const isDef = () => F.type === 'all' && !F.q.trim() && !F.user && F.period === '30d';
     let USERS = [];
     try { USERS = await BillPayApi.getUsers(); } catch (e) {}
-    let PAGE = { items: [], counts: { all: 0, login_ok: 0, login_fail: 0, logout: 0 }, next_cursor: null }, SEQ = 0, DEB = 0, LOADING = false, DN = 0;
-    const params = (cursor) => ({ q: F.q.trim(), type: F.type, user_id: F.user, ...range(), limit: 50, cursor });
+    const blank = () => ({ items: [], counts: Object.fromEntries(TYPES[F.tab].map(([k]) => [k, 0])), next_cursor: null });
+    let PAGE = blank(), SEQ = 0, DEB = 0, LOADING = false, DN = 0, TOT = { key: '', auth: null, actions: null };
+    const params = (cursor) => ({ q: F.q.trim(), [F.tab === 'auth' ? 'type' : 'object_type']: F.type, user_id: F.user, ...range(), limit: 50, cursor });
     const writeUrl = () => {
       const p = new URLSearchParams();
+      if (F.tab === 'actions') p.set('tab', 'actions');
       if (F.q.trim()) p.set('q', F.q.trim());
-      if (F.type !== 'all') p.set('type', F.type);
+      if (F.type !== 'all') p.set(F.tab === 'auth' ? 'type' : 'object', F.type);
       if (F.user) p.set('user', F.user);
       if (F.period !== '30d') p.set('period', F.period);
       if (F.period === 'custom') { p.set('from', F.from); p.set('to', F.to); }
@@ -649,18 +667,26 @@
     };
     const userName = () => F.user === 'unknown' ? 'неизвестный логин' : F.user ? ((USERS.find((u) => String(u.id) === F.user) || {}).login || '#' + F.user) : 'все';
     const periodName = () => F.period === 'custom' ? `${dm(F.from)}–${dm(F.to)}` : PERIODS.find((x) => x[0] === F.period)[1];
-    const userOpts = () => [['', 'Все пользователи', ''], ...USERS.map((u) => [String(u.id), u.login, u.from_env ? 'главный администратор' : u.name]), ['unknown', 'Неизвестный логин', 'попытки с несуществующим логином']];
+    const userOpts = () => [['', 'Все пользователи', ''], ...USERS.map((u) => [String(u.id), u.login, u.from_env ? 'главный администратор' : u.name]), ...(F.tab === 'auth' ? [['unknown', 'Неизвестный логин', 'попытки с несуществующим логином']] : [])];
     const dates = () => { const n = ++DN; return `<div class="f2 pdr"><div class="f"><label for="pdFrom${n}">С</label><input class="inp" id="pdFrom${n}" type="date" max="${TODAY}" value="${range().from}" data-from></div><div class="f"><label for="pdTo${n}">По</label><input class="inp" id="pdTo${n}" type="date" max="${TODAY}" value="${range().to}" data-to></div></div>`; };
 
+    const tabs = () => {
+      $('#ltabs').innerHTML = [['auth', 'Авторизация', 'shield'], ['actions', 'Действия', 'history']].map(([k, l, i]) => `<button type="button" role="tab" class="lt-b ${F.tab === k ? 'on' : ''}" data-tab="${k}" aria-selected="${F.tab === k}">${ic(i)}<span>${l}</span>${TOT[k] === null ? '' : `<em>${TOT[k]}</em>`}</button>`).join('');
+      $('#ghead').className = `lgx gh ${F.tab === 'auth' ? 'la' : 'lb2'}`;
+      $('#ghead').innerHTML = HEAD[F.tab].map((h) => `<span>${h}</span>`).join('') + '<span></span>';
+      const inp = $('#lq'); inp.placeholder = SEARCH[F.tab]; inp.setAttribute('aria-label', 'Поиск: ' + SEARCH[F.tab].toLowerCase());
+      $('#chips').setAttribute('aria-label', F.tab === 'auth' ? 'Тип события' : 'Объект');
+    };
     const controls = () => {
       const c = PAGE.counts;
       const open = $$('#fgroup .dd.open').map((d) => d.dataset.k);
+      tabs();
       $('#fgroup').innerHTML = `<div class="dd ${open.includes('user') ? 'open' : ''}" data-k="user"><button class="fbtn ${F.user ? 'set' : ''}" type="button" data-dd aria-haspopup="true" aria-expanded="${open.includes('user')}">${ic('user')}<span class="fl">Пользователь</span><span class="fv">${esc(userName())}</span>${ic('down')}</button>
           <div class="pop" role="menu"><div class="lbl pop-h">Пользователь</div>${userOpts().map(([k, l, s]) => `<button type="button" class="opt ${F.user === k ? 'on' : ''}" data-user="${k}" role="menuitemradio" aria-checked="${F.user === k}"><span class="rb2"></span><span class="ot">${esc(l)}${s ? `<small>${esc(s)}</small>` : ''}</span></button>`).join('')}</div></div>
         <div class="dd ${open.includes('period') ? 'open' : ''}" data-k="period"><button class="fbtn ${F.period !== '30d' ? 'set' : ''}" type="button" data-dd aria-haspopup="true" aria-expanded="${open.includes('period')}">${ic('cal')}<span class="fl">Период</span><span class="fv">${periodName()}</span>${ic('down')}</button>
           <div class="pop pop-r" role="menu"><div class="lbl pop-h">Период</div>${PERIODS.map(([k, l]) => `<button type="button" class="opt ${F.period === k ? 'on' : ''}" data-period="${k}" role="menuitemradio" aria-checked="${F.period === k}"><span class="rb2"></span><span class="ot">${l}</span></button>`).join('')}${dates()}
           <p class="pop-n">Время — ${esc(S.timezone || 'Europe/Moscow')}. Записи старше ${keep} ${plural(keep, 'дня', 'дней', 'дней')} удаляются автоматически.</p></div></div>`;
-      $('#chips').innerHTML = TYPES.map(([k, l]) => `<button class="chip ${F.type === k ? 'on' : ''}" type="button" data-type="${k}" aria-pressed="${F.type === k}">${l}<em>${c[k]}</em></button>`).join('');
+      $('#chips').innerHTML = TYPES[F.tab].map(([k, l]) => `<button class="chip ${F.type === k ? 'on' : ''}" type="button" data-type="${k}" aria-pressed="${F.type === k}">${l}<em>${c[k] ?? 0}</em></button>`).join('');
       const inp = $('#lq'); if (document.activeElement !== inp && inp.value !== F.q) inp.value = F.q;
       $('#lqclear').hidden = !F.q; $('#psearch').classList.toggle('has', !!F.q);
       $('#resetL').hidden = isDef();
@@ -673,21 +699,37 @@
       return diff === 0 ? ['Сегодня', long] : diff === 1 ? ['Вчера', long] : [long, WD[new Date(d + 'T12:00:00Z').getUTCDay()] + (d.slice(0, 4) !== TODAY.slice(0, 4) ? ' · ' + d.slice(0, 4) : '')];
     };
     const who = (e, cls = '') => {
+      if (e.source === 'telegram' && e.telegram) return `<span class="who ${cls}"><span class="ava tg">${ic('send')}</span><span class="t"><b>${esc(e.telegram.user)}</b><small>Telegram${e.telegram.chat ? ` · «${esc(e.telegram.chat)}»` : ''}</small></span></span>`;
       if (e.user) return `<span class="who ${cls}"><span class="ava ${e.user.from_env ? '' : 'n'}">${initials(e.user.name || e.user.login)}</span><span class="t"><b>${esc(e.user.login)}</b><small>${e.user.from_env ? 'главный администратор' : esc(e.user.name)}</small></span></span>`;
       if (e.user_deleted) return `<span class="who ${cls}"><span class="ava n">${initials(e.login || '?')}</span><span class="t"><b>${esc(e.login)}</b><small>пользователь удалён</small></span></span>`;
       return `<span class="who ${cls}"><span class="ava n q">?</span><span class="t"><b>${esc(e.login || '—')}</b><small>нет такого логина</small></span></span>`;
     };
     const pill = (e) => e.event === 'logout' ? '<span class="pill out"><i></i>Выход</span>' : e.result === 'ok' ? '<span class="pill paid"><i></i>Вход выполнен</span>' : '<span class="pill overdue"><i></i>Отказ</span>';
-    const row = (e, i, anim) => `<div class="lgx la rw ${anim ? 'rise' : ''}" style="--d:${Math.min(i, 12) * 22}ms" data-open="${e.id}" tabindex="0" role="button" aria-label="Открыть запись">
-      <span class="tm">${e.local_at.slice(11, 16)}<small>:${e.local_at.slice(17, 19)}</small></span>${who(e)}<span class="lev">${pill(e)}${e.reason ? `<small>${REASON[e.reason] || ''}</small>` : ''}</span><span class="ip">${esc(e.ip || '—')}</span><span class="dev">${esc(e.device || '—')}</span><span class="go">${ic('chev')}</span></div>`;
+    const actPill = (e) => { const [l, i, c] = ACT[e.event] || [e.event, 'edit', '']; return `<span class="ap ${c}">${ic(i)}${l}</span>`; };
+    const summary = (e) => {
+      const ch = e.changes || [];
+      if (e.event === 'payment.deleted') return '<span class="chg"><span class="mut">история оплат сохранена</span></span>';
+      if (/\.deleted$/.test(e.event)) return '<span class="chg"><span class="mut">запись удалена</span></span>';
+      if (/\.created$/.test(e.event)) { const v = ch.filter((c) => c.field !== 'password' && c.after != null); return `<span class="chg">${v.slice(0, 2).map((c) => `<b>${esc(c.after)}</b>`).join('<i>·</i>')}${ch.length > 2 ? `<em>+${ch.length - 2}</em>` : ''}</span>`; }
+      const c = ch[0]; if (!c) return '<span class="chg"></span>';
+      return `<span class="chg"><span class="k">${esc(fieldName(e, c))}</span>${c.before == null ? '' : `<s>${esc(c.before)}</s>`}<span class="arr">→</span>${c.after == null ? '<span class="mut">—</span>' : `<b>${esc(c.after)}</b>`}${ch.length > 1 ? `<em>+${ch.length - 1}</em>` : ''}</span>`;
+    };
+    const tm = (e) => `<span class="tm">${e.local_at.slice(11, 16)}<small>:${e.local_at.slice(17, 19)}</small></span>`;
+    const row = (e, i, anim) => e.kind === 'action'
+      ? `<div class="lgx lb2 rw ${anim ? 'rise' : ''}" style="--d:${Math.min(i, 12) * 22}ms" data-open="${e.id}" tabindex="0" role="button" aria-label="Открыть запись">
+      ${tm(e)}${who(e)}<span class="lev">${actPill(e)}</span><span class="obj"><b>${esc(e.object.label)}</b>${e.object.detail ? `<small>${esc(e.object.detail)}</small>` : ''}</span>${summary(e)}<span class="go">${ic('chev')}</span></div>`
+      : `<div class="lgx la rw ${anim ? 'rise' : ''}" style="--d:${Math.min(i, 12) * 22}ms" data-open="${e.id}" tabindex="0" role="button" aria-label="Открыть запись">
+      ${tm(e)}${who(e)}<span class="lev">${pill(e)}${e.reason ? `<small>${REASON[e.reason] || ''}</small>` : ''}</span><span class="ip">${esc(e.ip || '—')}</span><span class="dev">${esc(e.device || '—')}</span><span class="go">${ic('chev')}</span></div>`;
     const rows = (anim = true, from = 0) => {
       const box = $('#logs'), list = PAGE.items, total = PAGE.counts[F.type];
       box.classList.toggle('is-empty', !list.length);
       box.classList.toggle('no-data', !PAGE.counts.all && isDef());
       if (!list.length) {
         $('#rows').innerHTML = !PAGE.counts.all && isDef()
-          ? emptyCta('shield', 'Записей пока нет', `Здесь появятся входы и выходы пользователей за последние 30 дней: время, IP-адрес, устройство и причина отказа. Записи хранятся ${keep} ${plural(keep, 'день', 'дня', 'дней')}.`)
-          : emptyCta('search', 'Ничего не найдено', `${F.q.trim() ? `По запросу «${esc(F.q.trim())}»` : 'По выбранным фильтрам'} за период «${periodName().toLowerCase()}» записей нет. Измените запрос, период или сбросьте фильтры.`, `<button class="btn" type="button" data-reset>${ic('undo')}Сбросить фильтры</button>`);
+          ? (F.tab === 'auth'
+            ? emptyCta('shield', 'Записей пока нет', `Здесь появятся входы и выходы пользователей за последние 30 дней: время, IP-адрес, устройство и причина отказа. Записи хранятся ${keep} ${plural(keep, 'день', 'дня', 'дней')}.`)
+            : emptyCta('history', 'Действий пока нет', `Здесь появятся изменения платежей, отметки оплаты (в том числе из Telegram) и изменения пользователей за последние 30 дней: кто, что и как изменил. Записи хранятся ${keep} ${plural(keep, 'день', 'дня', 'дней')}.`))
+          : emptyCta('search', 'Ничего не найдено', `${F.q.trim() ? `По запросу «${esc(F.q.trim())}»` : 'По выбранным фильтрам'} за период «${periodName().toLowerCase()}» ${F.tab === 'auth' ? 'входов и выходов' : 'действий'} нет. Измените запрос, период или сбросьте фильтры.`, `<button class="btn" type="button" data-reset>${ic('undo')}Сбросить фильтры</button>`);
         $('#foot').innerHTML = '';
         return;
       }
@@ -702,14 +744,25 @@
     };
     function sheet() {
       const c = PAGE.counts;
-      $('#shBody').innerHTML = `<div class="sh-s"><div class="lbl">Тип события</div><div class="sh-chips">${TYPES.map(([k, l]) => `<button type="button" class="chip ${F.type === k ? 'on' : ''}" data-type="${k}" aria-pressed="${F.type === k}">${l}<em>${c[k]}</em></button>`).join('')}</div></div>
+      $('#shBody').innerHTML = `<div class="sh-s"><div class="lbl">${F.tab === 'auth' ? 'Тип события' : 'Объект'}</div><div class="sh-chips">${TYPES[F.tab].map(([k, l]) => `<button type="button" class="chip ${F.type === k ? 'on' : ''}" data-type="${k}" aria-pressed="${F.type === k}">${l}<em>${c[k] ?? 0}</em></button>`).join('')}</div></div>
         <div class="sh-s"><div class="lbl">Пользователь</div><div class="sh-chips">${userOpts().map(([k, l]) => `<button type="button" class="chip ${F.user === k ? 'on' : ''}" data-user="${k}" aria-pressed="${F.user === k}">${esc(k === '' ? 'Все' : l)}</button>`).join('')}</div></div>
         <div class="sh-s"><div class="lbl">Период</div><div class="sh-chips">${PERIODS.map(([k, l]) => `<button type="button" class="chip ${F.period === k ? 'on' : ''}" data-period="${k}" aria-pressed="${F.period === k}">${l}</button>`).join('')}</div>${dates()}</div>`;
-      const n = c[F.type]; $('#shApply').textContent = n ? `Показать ${n} ${plural(n, 'запись', 'записи', 'записей')}` : 'Ничего не найдено';
+      const n = c[F.type] ?? 0; $('#shApply').textContent = n ? `Показать ${n} ${plural(n, 'запись', 'записи', 'записей')}` : 'Ничего не найдено';
+    }
+    async function totals() {
+      const r = range(), key = r.from + '|' + r.to;
+      if (TOT.key === key) return;
+      TOT.key = key;
+      try {
+        const [a, b] = await Promise.all([BillPayApi.getLogs('auth', { ...r, limit: 1 }), BillPayApi.getLogs('actions', { ...r, limit: 1 })]);
+        if (TOT.key !== key) return;
+        TOT.auth = a.counts.all; TOT.actions = b.counts.all; tabs();
+      } catch (e) { TOT.key = ''; }
     }
     async function load() {
       const my = ++SEQ;
-      let p; try { p = await BillPayApi.getAuthLogs(params()); } catch (e) { toast(esc(e.message)); return; }
+      totals();
+      let p; try { p = await BillPayApi.getLogs(F.tab, params()); } catch (e) { toast(esc(e.message)); return; }
       if (my !== SEQ) return;
       PAGE = p; controls(); rows(true);
     }
@@ -718,34 +771,56 @@
       LOADING = true; btn.disabled = true;
       const my = SEQ, from = PAGE.items.length;
       try {
-        const p = await BillPayApi.getAuthLogs(params(PAGE.next_cursor));
+        const p = await BillPayApi.getLogs(F.tab, params(PAGE.next_cursor));
         if (my !== SEQ) return;
         PAGE = { ...p, items: [...PAGE.items, ...p.items] }; rows(true, from);
       } catch (e) { toast(esc(e.message)); btn.disabled = false; } finally { LOADING = false; }
     }
     const apply = () => { clearTimeout(DEB); writeUrl(); controls(); load(); };
     const resetAll = () => { Object.assign(F, { q: '', type: 'all', user: '', period: '30d' }); $('#lq').value = ''; apply(); };
+    const setTab = (t) => {
+      if (t === F.tab) return;
+      Object.assign(F, { tab: t, type: 'all', q: '' });
+      if (t === 'actions' && F.user === 'unknown') F.user = '';
+      $('#lq').value = ''; PAGE = blank(); SEQ++;
+      $('#rows').innerHTML = ''; $('#foot').innerHTML = '';
+      apply();
+    };
 
     const dl = $('#detail'), box = $('#detailBox');
     const closeDetail = () => { dl.classList.remove('on'); dl.setAttribute('aria-hidden', 'true'); };
-    async function detail(id) {
-      let e; try { e = await BillPayApi.getLog(id); } catch (x) { toast(esc(x.message)); return; }
-      const title = e.event === 'logout' ? 'Выход из системы' : e.result === 'ok' ? 'Успешный вход' : 'Неудачный вход';
-      const icn = e.event === 'logout' ? 'logout' : e.result === 'ok' ? 'shield' : 'lock';
-      const kv = (k, v) => `<div class="dk"><span>${k}</span><div>${v}</div></div>`;
-      const role = e.user ? `<span class="role ${e.user.role === 'admin' ? 'admin' : ''}">${e.user.role === 'admin' ? 'Администратор' : 'Пользователь'}</span>` : '';
-      const target = e.user ? e.user.login : e.login || '';
-      box.innerHTML = `<div class="grab"></div><div class="sh-h dh"><span class="dic">${ic(icn)}</span><div class="dt2"><b>${title}</b><small>#${e.id} · ${dmy(e.local_at.slice(0, 10))}, ${e.local_at.slice(11, 19)} · ${esc(S.timezone || 'Europe/Moscow')}</small></div><button class="ibtn sm" type="button" data-dclose aria-label="Закрыть">${ic('x')}</button></div>
-        <div class="sh-b"><div class="pf-who">${who(e, 'lgw')}${role}</div>
-          <div class="dl">${kv('Результат', `${pill(e)}${e.reason ? `<small class="rs">${REASON[e.reason] || ''}${e.reason === 'rate_limited' ? ' · ответ 429, вход с этого IP временно заблокирован' : ''}</small>` : ''}`)}
+    const kv = (k, v) => `<div class="dk"><span>${k}</span><div>${v}</div></div>`;
+    const where = (e) => `<small>${[e.ip, e.device].filter(Boolean).map(esc).join(' · ') || '—'}</small>`;
+    function authBody(e) {
+      return `<div class="dl">${kv('Результат', `${pill(e)}${e.reason ? `<small class="rs">${REASON[e.reason] || ''}${e.reason === 'rate_limited' ? ' · ответ 429, вход с этого IP временно заблокирован' : ''}</small>` : ''}`)}
             ${e.result === 'fail' ? kv('Введённый логин', `<code>${esc(e.login || '—')}</code>`) : ''}
             ${kv('Источник', e.source === 'api' ? 'API (Bearer-токен)' : 'Веб-интерфейс')}
             ${kv('IP-адрес', `<code>${esc(e.ip || '—')}</code>`)}${kv('Устройство', esc(e.device || '—'))}${kv('User-Agent', `<code class="ua">${esc(e.user_agent || '—')}</code>`)}</div>
-          ${e.result === 'fail' ? `<div class="hint">${ic('info')}<span>Введённый пароль не сохраняется — ни открытым текстом, ни хешем. Пользователь видит только общее «Неверный логин или пароль».</span></div>` : ''}</div>
+          ${e.result === 'fail' ? `<div class="hint">${ic('info')}<span>Введённый пароль не сохраняется — ни открытым текстом, ни хешем. Пользователь видит только общее «Неверный логин или пароль».</span></div>` : ''}`;
+    }
+    function actionBody(e) {
+      const src = e.source === 'telegram'
+        ? `Telegram-бот · кнопка «Оплачено»<small>${e.telegram && e.telegram.chat ? `чат «${esc(e.telegram.chat)}», ` : ''}${esc(e.telegram ? e.telegram.user : '')}</small>`
+        : `${e.source === 'api' ? 'API (Bearer-токен)' : 'Веб-интерфейс'}${where(e)}`;
+      const ch = e.changes || [];
+      return `<div class="dl">${kv('Действие', actPill(e))}${kv('Объект', `<b>${esc(e.object.label)}</b><small>${e.object.detail ? esc(e.object.detail) + ' · ' : ''}#${e.object.id}</small>`)}${kv('Источник', src)}</div>
+          ${ch.length ? `<div class="diff"><div class="df-h"><span class="lbl">Изменения</span><span class="lbl">было</span><span></span><span class="lbl">стало</span></div>${ch.map((c) => `<div class="df-r ${c.before == null ? 'add' : c.after == null ? 'del' : ''}"><span class="k">${esc(fieldName(e, c))}</span><span class="b">${c.before == null ? '<em class="nil">—</em>' : `<s>${esc(c.before)}</s>`}</span><span class="arr">→</span><span class="a">${c.after == null ? '<em class="nil">—</em>' : `<b>${esc(c.after)}</b>`}</span></div>`).join('')}</div>` : ''}
+          ${ch.some((c) => c.field === 'password') ? `<div class="hint">${ic('lock')}<span>Пароль в журнал не попадает: записывается только факт, что он задан или изменён.</span></div>` : ''}`;
+    }
+    async function detail(id) {
+      let e; try { e = await BillPayApi.getLog(id); } catch (x) { toast(esc(x.message)); return; }
+      const isAuth = e.kind !== 'action';
+      const title = isAuth ? (e.event === 'logout' ? 'Выход из системы' : e.result === 'ok' ? 'Успешный вход' : 'Неудачный вход') : (ACT[e.event] || [e.event])[0];
+      const icn = isAuth ? (e.event === 'logout' ? 'logout' : e.result === 'ok' ? 'shield' : 'lock') : (ACT[e.event] || [0, 'edit'])[1];
+      const role = e.user ? `<span class="role ${e.user.role === 'admin' ? 'admin' : ''}">${e.user.role === 'admin' ? 'Администратор' : 'Пользователь'}</span>` : '';
+      const tg = !isAuth && e.source === 'telegram' && e.telegram ? e.telegram.user : '';
+      const target = e.user ? e.user.login : tg || e.login || '';
+      box.innerHTML = `<div class="grab"></div><div class="sh-h dh"><span class="dic">${ic(icn)}</span><div class="dt2"><b>${title}</b><small>#${e.id} · ${dmy(e.local_at.slice(0, 10))}, ${e.local_at.slice(11, 19)} · ${esc(S.timezone || 'Europe/Moscow')}</small></div><button class="ibtn sm" type="button" data-dclose aria-label="Закрыть">${ic('x')}</button></div>
+        <div class="sh-b"><div class="pf-who">${who(e, 'lgw')}${role}</div>${isAuth ? authBody(e) : actionBody(e)}</div>
         <div class="sh-f pfs-f">${target ? `<button class="btn ghost lg" type="button" data-all="${e.id}">${ic('filter')}<span class="tx">Все события ${esc(target)}</span></button>` : ''}<button class="btn lg" type="button" data-dclose>Закрыть</button></div>`;
       box.dataset.user = e.user ? String(e.user.id) : '';
-      box.dataset.login = e.login || '';
-      box.dataset.unknown = !e.user && !e.user_deleted ? '1' : '';
+      box.dataset.login = tg || e.login || '';
+      box.dataset.unknown = isAuth && !e.user && !e.user_deleted ? '1' : '';
       dl.classList.add('on'); dl.setAttribute('aria-hidden', 'false');
     }
 
@@ -753,6 +828,7 @@
     const closeSheet = () => { sh.classList.remove('on'); sh.setAttribute('aria-hidden', 'true'); };
     const closeDd = () => $$('#fgroup .dd.open').forEach((d) => { d.classList.remove('open'); $('[data-dd]', d).setAttribute('aria-expanded', 'false'); });
     const onFilter = (t) => {
+      const tb = t.closest('[data-tab]'); if (tb) { closeDd(); setTab(tb.dataset.tab); return true; }
       const ty = t.closest('[data-type]'); if (ty) { F.type = ty.dataset.type; apply(); return true; }
       const u = t.closest('[data-user]'); if (u) { F.user = u.dataset.user; closeDd(); apply(); return true; }
       const p = t.closest('[data-period]'); if (p) { F.period = p.dataset.period; if (F.period !== 'custom') closeDd(); apply(); return true; }
@@ -768,8 +844,9 @@
       if (t.closest('[data-close-sheet]') || t === sh) { closeSheet(); return; }
       if (t.closest('[data-dclose]') || t === dl) { closeDetail(); return; }
       if (t.closest('[data-all]')) {
-        Object.assign(F, { type: 'all', user: box.dataset.user || (box.dataset.unknown ? 'unknown' : ''), q: box.dataset.user ? '' : box.dataset.login });
-        closeDetail(); apply(); return;
+        const q = box.dataset.user ? '' : box.dataset.login;
+        Object.assign(F, { type: 'all', user: box.dataset.user || (box.dataset.unknown ? 'unknown' : ''), q });
+        $('#lq').value = q; closeDetail(); apply(); return;
       }
       if (t.closest('#logs, #sheet') && onFilter(t)) return;
       const m = t.closest('[data-more]'); if (m) { more(m); return; }

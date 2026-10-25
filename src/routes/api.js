@@ -4,7 +4,8 @@ const config = require('../config');
 const D = require('../dates');
 const { parseEmail } = require('../mailer');
 const { hostOf } = require('../webhook');
-const { parseAuthQuery } = require('../audit');
+const { tx } = require('../db');
+const { parseAuthQuery, parseActionsQuery, events: E } = require('../audit');
 
 module.exports = function apiRouter({ pool, auth, payments, loginLimiter, audit }) {
   const r = express.Router();
@@ -49,7 +50,13 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter, audit 
     const e = parseEmail(b.email);
     if (e.error) return bad(res, EMAIL_ERR, 422);
     try {
-      const { rows: [u] } = await pool.query(`UPDATE users SET email = $2 WHERE id = $1 RETURNING ${RET}`, [req.user.id, e.value]);
+      const u = await tx(pool, async (c) => {
+        const { rows: [prev] } = await c.query('SELECT email FROM users WHERE id = $1 FOR UPDATE', [req.user.id]);
+        if (!prev) return null;
+        const { rows: [next] } = await c.query(`UPDATE users SET email = $2 WHERE id = $1 RETURNING ${RET}`, [req.user.id, e.value]);
+        await audit.action(req)(c, E.profileEmail(req.user, prev.email, next.email));
+        return next;
+      });
       if (!u) return bad(res, 'Пользователь не найден', 404);
       res.json(auth.publicUser(u));
     } catch (x) {
@@ -75,7 +82,7 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter, audit 
     const b = { periodicity: 'monthly', ...(req.body || {}) };
     const err = payments.validateRecurring(b);
     if (err.length) return bad(res, err.join('; '), 422);
-    res.status(201).json(await payments.createRecurring(b, req.user.id));
+    res.status(201).json(await payments.createRecurring(b, req.user.id, audit.action(req)));
   });
 
   r.patch('/recurring-payments/:id', requireAdmin, async (req, res) => {
@@ -84,7 +91,7 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter, audit 
     if (!rp) return bad(res, 'Платёж не найден', 404);
     const err = payments.validateRecurring(req.body || {}, true);
     if (err.length) return bad(res, err.join('; '), 422);
-    const updated = await payments.updateRecurring(rp, req.body);
+    const updated = await payments.updateRecurring(rp, req.body, audit.action(req));
     if (!updated) return bad(res, 'Платёж не найден', 404);
     res.json(updated);
   });
@@ -92,7 +99,7 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter, audit 
   r.delete('/recurring-payments/:id', requireAdmin, async (req, res) => {
     const id = idParam(req);
     const rp = Number.isSafeInteger(id) ? await payments.getActiveRecurring(id) : null;
-    if (!rp || !(await payments.deleteRecurring(rp))) return bad(res, 'Платёж не найден', 404);
+    if (!rp || !(await payments.deleteRecurring(rp, audit.action(req)))) return bad(res, 'Платёж не найден', 404);
     res.status(204).end();
   });
 
@@ -152,7 +159,7 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter, audit 
     if (typeof isPaid !== 'boolean') return bad(res, 'Передайте is_paid (true/false) и/или paid_at', 422);
     if (isPaid && b.paid_at != null && !D.isDate(b.paid_at)) return bad(res, 'paid_at: дата YYYY-MM-DD', 422);
     if (isPaid && b.paid_at && b.paid_at > D.today()) return bad(res, 'paid_at не может быть в будущем', 422);
-    res.json(await payments.setPaid(o, isPaid, isPaid ? b.paid_at : null, req.user.id));
+    res.json(await payments.setPaid(o, isPaid, isPaid ? b.paid_at : null, req.user.id, audit.action(req)));
   });
 
   r.get('/payments/summary', requireAuth, async (req, res) => {
@@ -190,11 +197,16 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter, audit 
     const l = login.toLowerCase();
     if (l === config.admin.login) return bad(res, 'Логин уже занят', 409);
     try {
-      const { rows: [u] } = await pool.query(
-        `INSERT INTO users (login, name, role, password_hash, created_at, email) VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING ${RET}`,
-        [l, name.trim(), 'user', await bcrypt.hash(password, 10), D.today(), e.value]
-      );
+      const hash = await bcrypt.hash(password, 10);
+      const u = await tx(pool, async (c) => {
+        const { rows: [created] } = await c.query(
+          `INSERT INTO users (login, name, role, password_hash, created_at, email) VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING ${RET}`,
+          [l, name.trim(), 'user', hash, D.today(), e.value]
+        );
+        await audit.action(req)(c, E.userCreated(created));
+        return created;
+      });
       res.status(201).json(auth.publicUser(u));
     } catch (x) {
       if (emailTaken(x)) return bad(res, EMAIL_TAKEN, 409);
@@ -215,12 +227,19 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter, audit 
     const e = email === undefined ? null : parseEmail(email);
     if (e && e.error) return bad(res, EMAIL_ERR, 422);
     try {
-      const { rows: [updated] } = await pool.query(
-        `UPDATE users SET name = COALESCE($2, name), password_hash = COALESCE($3, password_hash),
-                email = CASE WHEN $4 THEN $5 ELSE email END
-          WHERE id = $1 AND NOT is_env_admin RETURNING ${RET}`,
-        [id, name !== undefined ? name.trim() : null, password !== undefined ? await bcrypt.hash(password, 10) : null, !!e, e ? e.value : null]
-      );
+      const hash = password !== undefined ? await bcrypt.hash(password, 10) : null;
+      const updated = await tx(pool, async (c) => {
+        const { rows: [prev] } = await c.query(`SELECT ${RET} FROM users WHERE id = $1 AND NOT is_env_admin FOR UPDATE`, [id]);
+        if (!prev) return null;
+        const { rows: [next] } = await c.query(
+          `UPDATE users SET name = COALESCE($2, name), password_hash = COALESCE($3, password_hash),
+                  email = CASE WHEN $4 THEN $5 ELSE email END
+            WHERE id = $1 RETURNING ${RET}`,
+          [id, name !== undefined ? name.trim() : null, hash, !!e, e ? e.value : null]
+        );
+        await audit.action(req)(c, E.userUpdated(prev, next, password !== undefined));
+        return next;
+      });
       if (!updated) return bad(res, 'Пользователь не найден', 404);
       res.json(auth.publicUser(updated));
     } catch (x) {
@@ -233,8 +252,12 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter, audit 
     const id = idParam(req);
     if (id === auth.ENV_ADMIN_ID) return protectedAdmin(res);
     if (id === req.user.id) return bad(res, 'Нельзя удалить самого себя', 400);
-    const { rowCount } = Number.isSafeInteger(id) ? await pool.query('DELETE FROM users WHERE id = $1 AND NOT is_env_admin', [id]) : { rowCount: 0 };
-    if (!rowCount) return bad(res, 'Пользователь не найден', 404);
+    const gone = Number.isSafeInteger(id) ? await tx(pool, async (c) => {
+      const { rows: [u] } = await c.query(`DELETE FROM users WHERE id = $1 AND NOT is_env_admin RETURNING ${RET}`, [id]);
+      if (u) await audit.action(req)(c, E.userDeleted(u));
+      return u;
+    }) : null;
+    if (!gone) return bad(res, 'Пользователь не найден', 404);
     res.status(204).end();
   });
 
@@ -242,6 +265,12 @@ module.exports = function apiRouter({ pool, auth, payments, loginLimiter, audit 
     const f = parseAuthQuery(req.query);
     if (f.err.length) return bad(res, f.err.join('; '), 422);
     res.json(await audit.listAuth(f));
+  });
+
+  r.get('/logs/actions', requireAdmin, async (req, res) => {
+    const f = parseActionsQuery(req.query);
+    if (f.err.length) return bad(res, f.err.join('; '), 422);
+    res.json(await audit.listActions(f));
   });
 
   r.get('/logs/:id', requireAdmin, async (req, res) => {
